@@ -176,7 +176,7 @@ Commit.
 - Consumes: saved raw signals
 - Produces: retention enforcement background worker or DB TTL policy
 
-- [ ] Step 1: Implement a retention enforcer that either:
+- [x] Step 1: Implement a retention enforcer that either:
   - For Postgres: creates a background goroutine that deletes `signals` older than retention window (configurable), or
   - Uses DB native TTL if available (e.g., Timescale or cloud storage lifecycle)
 
@@ -195,7 +195,7 @@ func StartRetentionEnforcer(s Storage, window time.Duration, stop <-chan struct{
 }
 ```
 
-- [ ] Step 2: Redaction: add a utility that removes sensitive keys from `Payload` before storing raw archive. Provide a config-driven allow-list.
+- [x] Step 2: Redaction: add a utility that removes sensitive keys from `Payload` before storing raw archive. Provide a config-driven allow-list.
 
 Commit.
 
@@ -209,7 +209,7 @@ Commit.
 - Consumes: `queue.IngestionJob` containing signals
 - Produces: incidents via `store.Storage.SaveIncident`
 
-- [ ] Step 1: Implement correlation window and grouping by `source`/`environment`. Pseudocode:
+- [x] Step 1: Implement correlation window and grouping by `source`/`environment`. Pseudocode:
 ```go
 for job := range q {
   groups := groupBySourceAndWindow(job.Signals, window)
@@ -220,7 +220,7 @@ for job := range q {
 }
 ```
 
-- [ ] Step 2: Add unit tests for grouping and merging logic.
+- [x] Step 2: Add unit tests for grouping and merging logic.
 
 Commit.
 
