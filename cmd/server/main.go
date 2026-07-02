@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 	"tracemind/internal/api"
 	"tracemind/internal/queue"
 	"tracemind/internal/store"
@@ -31,7 +32,9 @@ func main() {
 
 	q := queue.NewQueue(100)
 	stopCh := make(chan struct{})
+	stopDel := make(chan struct{})
 	worker.StartWorker(q, dbConn, stopCh)
+	store.StartRetentionEnforcer(dbConn, time.Hour*24*30, stopDel)
 
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
@@ -52,10 +55,16 @@ func main() {
 		<-c
 		log.Println("shutting down")
 		close(stopCh)
+		close(stopCh)
 		app.Shutdown()
 	}()
 
-	log.Printf("listening :%s", os.Getenv("PORT"))
-	app.Listen(":" + os.Getenv("PORT"))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("listening :%s", port)
+	app.Listen(":" + port)
 
 }

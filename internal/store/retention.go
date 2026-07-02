@@ -62,19 +62,23 @@ func RedactPayloadByAllowList(payload map[string]interface{}, allowList map[stri
 }
 
 // StartRetentionEnforcer periodically deletes expired signals.
-func StartRetentionEnforcer(s Storage, window time.Duration, stop <-chan struct{}) {
+func StartRetentionEnforcer(s PostgresStore, window time.Duration, stop <-chan struct{}) {
 	startRetentionEnforcerWithInterval(s, window, time.Hour, stop)
 }
 
-func startRetentionEnforcerWithInterval(s Storage, window time.Duration, interval time.Duration, stop <-chan struct{}) {
+func startRetentionEnforcerWithInterval(s PostgresStore, window time.Duration, interval time.Duration, stop <-chan struct{}) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		cleanup := func() {
+			cutoff := time.Now().UTC().Add(-window)
+			s.DeleteSignalsOlderThan(cutoff)
+		}
+		cleanup()
 		for {
 			select {
 			case <-ticker.C:
-				cutoff := time.Now().UTC().Add(-window)
-				s.DeleteSignalsOlderThan(cutoff)
+				cleanup()
 			case <-stop:
 				return
 			}

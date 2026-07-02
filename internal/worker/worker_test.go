@@ -5,7 +5,6 @@ import (
 	"time"
 	"tracemind/internal/models"
 	"tracemind/internal/queue"
-	"tracemind/internal/store"
 
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +27,8 @@ func TestGroupBySourceAndWindow_SplitsBySourceEnvAndGap(t *testing.T) {
 func TestProcessJob_CreatesIncidentForHighSeverityGroup(t *testing.T) {
 	t.Parallel()
 
-	s := store.NewStore()
+	s, cleanup := newWorkerTestPostgresStore(t)
+	t.Cleanup(cleanup)
 	base := time.Now().UTC()
 	job := ingestionJobForTest([]models.Signal{
 		{ID: "h1", EventType: "log", Source: "svc-a", Env: "prod", Timestamp: base, Severity: 5},
@@ -38,17 +38,25 @@ func TestProcessJob_CreatesIncidentForHighSeverityGroup(t *testing.T) {
 	processJob(job, s)
 
 	incidents := s.ListIncidents()
-	require.Len(t, incidents, 1)
-	require.ElementsMatch(t, []string{"h1", "h2"}, incidents[0].SignalIDs)
-	require.Equal(t, 5, incidents[0].Severity)
-	require.Equal(t, []string{"svc-a"}, incidents[0].ImpactedServices)
-	require.Equal(t, []string{"prod"}, incidents[0].Environments)
+	var found *models.Incident
+	for i := range incidents {
+		inc := &incidents[i]
+		if contains(inc.SignalIDs, "h1") && contains(inc.SignalIDs, "h2") {
+			found = inc
+			break
+		}
+	}
+	require.NotNil(t, found)
+	require.Equal(t, 5, found.Severity)
+	require.Equal(t, []string{"svc-a"}, found.ImpactedServices)
+	require.Equal(t, []string{"prod"}, found.Environments)
 }
 
 func TestProcessJob_MergesIntoExistingIncident_WhenRelated(t *testing.T) {
 	t.Parallel()
 
-	s := store.NewStore()
+	s, cleanup := newWorkerTestPostgresStore(t)
+	t.Cleanup(cleanup)
 	base := time.Now().UTC()
 	s.SaveIncident(models.Incident{
 		ID:               "inc-existing",

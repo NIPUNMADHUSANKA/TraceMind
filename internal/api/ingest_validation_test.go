@@ -10,15 +10,17 @@ import (
 	"tracemind/internal/api"
 	"tracemind/internal/models"
 	"tracemind/internal/queue"
-	"tracemind/internal/store"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/require"
 )
 
-func setupIngestApp() (*fiber.App, chan queue.IngestionJob) {
+func setupIngestApp(t *testing.T) (*fiber.App, chan queue.IngestionJob) {
+	t.Helper()
+
 	app := fiber.New()
-	s := store.NewStore()
+	s, cleanup := newTestPostgresStore(t)
+	t.Cleanup(cleanup)
 	q := queue.NewQueue(10)
 	app.Post("/api/ingest", api.IngestHandler(s, q))
 	return app, q
@@ -153,7 +155,7 @@ func TestIngestValidation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			app, _ := setupIngestApp()
+			app, _ := setupIngestApp(t)
 			resp, got := postIngest(t, app, tc.body)
 
 			require.Equal(t, tc.expectedCode, resp.StatusCode)
@@ -172,7 +174,7 @@ func TestIngestValidation(t *testing.T) {
 func TestIngestValidation_QueuesOnlyAcceptedSignals(t *testing.T) {
 	t.Parallel()
 
-	app, q := setupIngestApp()
+	app, q := setupIngestApp(t)
 	body := `{"sourceContext":"local","signals":[{"eventType":"log","source":"svc-a","severity":5},{"eventType":"unknown","source":"svc-b","severity":5},{"eventType":"queue","source":"svc-c","severity":2,"timestamp":"bad-time"}]}`
 
 	resp, got := postIngest(t, app, body)
@@ -193,7 +195,7 @@ func TestIngestValidation_QueuesOnlyAcceptedSignals(t *testing.T) {
 func TestIngestValidation_AllRejectedHasNoIngestionID(t *testing.T) {
 	t.Parallel()
 
-	app, q := setupIngestApp()
+	app, q := setupIngestApp(t)
 	body := `{"sourceContext":"local","signals":[{"eventType":"unknown","source":"svc-a","severity":7}]}`
 
 	resp, got := postIngest(t, app, body)

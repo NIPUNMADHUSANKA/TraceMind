@@ -41,6 +41,8 @@ func IngestHandler(s store.PostgresStore, q chan queue.IngestionJob) fiber.Handl
 		var req ingestRequestInput
 		if err := c.BodyParser(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid payload"})
+		} else if len(req.Signals) == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "signals is required and must contain at least one item"})
 		}
 		accepted := 0
 		rejected := 0
@@ -50,8 +52,11 @@ func IngestHandler(s store.PostgresStore, q chan queue.IngestionJob) fiber.Handl
 			sig := &req.Signals[i]
 			signalErrs := []string{}
 
-			if sig.EventType == "" || sig.Source == "" {
-				signalErrs = append(signalErrs, "missing eventType or source")
+			if sig.EventType == "" {
+				signalErrs = append(signalErrs, "missing eventType")
+			}
+			if sig.Source == "" {
+				signalErrs = append(signalErrs, "missing source")
 			}
 			if sig.EventType != "" && !allowedEventTypes[sig.EventType] {
 				signalErrs = append(signalErrs, "invalid eventType")
@@ -70,6 +75,12 @@ func IngestHandler(s store.PostgresStore, q chan queue.IngestionJob) fiber.Handl
 				} else {
 					parsedTimestamp = t
 				}
+			} else {
+				parsedTimestamp, _ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
+			}
+
+			if sig.Message == "" {
+				signalErrs = append(signalErrs, "missing message")
 			}
 
 			if len(signalErrs) > 0 {
@@ -100,9 +111,8 @@ func IngestHandler(s store.PostgresStore, q chan queue.IngestionJob) fiber.Handl
 			acceptedSignals = append(acceptedSignals, validated)
 			accepted++
 		}
-		ingID := ""
+		ingID := uuid.NewString()
 		if len(acceptedSignals) > 0 {
-			ingID = uuid.NewString()
 			q <- queue.IngestionJob{IngestionID: ingID, Signals: acceptedSignals}
 		}
 		resp := models.IngestResponse{
@@ -111,6 +121,6 @@ func IngestHandler(s store.PostgresStore, q chan queue.IngestionJob) fiber.Handl
 			RejectedCount: rejected,
 			Errors:        errs,
 		}
-		return c.JSON(resp)
+		return c.Status(fiber.StatusAccepted).JSON(resp)
 	}
 }

@@ -16,6 +16,8 @@ type PostgresStore struct {
 	db *sql.DB
 }
 
+const signalDeleteBatchSize = 1000
+
 func NewPostgresStore(dsn string) (*PostgresStore, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -41,6 +43,14 @@ CREATE TABLE IF NOT EXISTS signals (
     payload jsonb,
     metadata jsonb
 );
+`)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	_, err = db.Exec(`
+CREATE INDEX IF NOT EXISTS signals_timestamp_idx ON signals (timestamp);
 `)
 	if err != nil {
 		_ = db.Close()
@@ -84,6 +94,7 @@ func (p *PostgresStore) SaveSignal(sig models.Signal) {
 	if sig.Timestamp.IsZero() {
 		sig.Timestamp = time.Now().UTC()
 	}
+	sig.Message = SanitizeMessage(sig.Message)
 	sig.Payload = RedactPayloadByAllowList(sig.Payload, payloadAllowListSnapshot())
 
 	payloadJSON, err := json.Marshal(sig.Payload)
@@ -149,7 +160,24 @@ func (p *PostgresStore) GetSignal(id string) (models.Signal, bool) {
 }
 
 func (p *PostgresStore) DeleteSignalsOlderThan(cutoff time.Time) int {
-	res, err := p.db.Exec(`DELETE FROM signals WHERE timestamp < $1`, cutoff)
+	totalDeleted := 0
+	for {
+		deleted := p.deleteSignalsOlderThanBatch(cutoff, signalDeleteBatchSize)
+		totalDeleted += deleted
+		if deleted < signalDeleteBatchSize {
+			return totalDeleted
+		}
+	}
+}
+
+func (p *PostgresStore) deleteSignalsOlderThanBatch(cutoff time.Time, batchSize int) int {
+	res, err := p.db.Exec(`DELETE FROM signals
+WHERE ctid IN (
+	SELECT ctid FROM signals
+	WHERE timestamp < $1
+	ORDER BY timestamp ASC
+	LIMIT $2
+)`, cutoff, batchSize)
 	if err != nil {
 		log.Printf("store: delete old signals failed: %v", err)
 		return 0

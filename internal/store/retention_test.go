@@ -86,3 +86,20 @@ func TestConfigurePayloadAllowList_AppliesDuringSaveSignal(t *testing.T) {
 	_, hasToken := sig.Payload["token"]
 	require.False(t, hasToken)
 }
+
+func TestSaveSignal_SanitizesMessage(t *testing.T) {
+	t.Parallel()
+
+	s := NewStore()
+	s.SaveSignal(models.Signal{
+		ID:        "sig-msg-redact",
+		EventType: "log",
+		Source:    "svc",
+		Severity:  2,
+		Message:   "user=user@example.com token=abc123",
+	})
+
+	sig, ok := s.GetSignal("sig-msg-redact")
+	require.True(t, ok)
+	require.Equal(t, "user=[REDACTED_EMAIL] token=[REDACTED]", sig.Message)
+}

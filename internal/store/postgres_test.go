@@ -58,6 +58,40 @@ func TestPostgresStore_SaveSignal_SetsDefaults(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestPostgresStore_SaveSignal_SanitizesMessage(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := &PostgresStore{db: db}
+
+	mock.ExpectExec("INSERT INTO signals").
+		WithArgs(
+			nonEmptyStringMatcher{},
+			"log",
+			"svc",
+			"prod",
+			nonZeroTimeMatcher{},
+			2,
+			"contact=[REDACTED_EMAIL] password=[REDACTED]",
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	ps.SaveSignal(models.Signal{
+		EventType: "log",
+		Source:    "svc",
+		Env:       "prod",
+		Severity:  2,
+		Message:   "contact=alice@example.com password=supersecret",
+	})
+
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestPostgresStore_SaveIncident_SetsDefaultTimes(t *testing.T) {
 	t.Parallel()
 
@@ -111,6 +145,28 @@ func TestPostgresStore_GetSignal_InvalidJSON_ReturnsFalse(t *testing.T) {
 
 	_, ok := ps.GetSignal("id-1")
 	require.False(t, ok)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresStore_DeleteSignalsOlderThan_DeletesInBatches(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := &PostgresStore{db: db}
+	cutoff := time.Now().UTC().Add(-24 * time.Hour)
+
+	mock.ExpectExec("DELETE FROM signals").
+		WithArgs(cutoff, signalDeleteBatchSize).
+		WillReturnResult(sqlmock.NewResult(0, signalDeleteBatchSize))
+	mock.ExpectExec("DELETE FROM signals").
+		WithArgs(cutoff, signalDeleteBatchSize).
+		WillReturnResult(sqlmock.NewResult(0, 250))
+
+	deleted := ps.DeleteSignalsOlderThan(cutoff)
+	require.Equal(t, signalDeleteBatchSize+250, deleted)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

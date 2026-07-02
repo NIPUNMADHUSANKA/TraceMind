@@ -8,15 +8,17 @@ import (
 
 	"tracemind/internal/api"
 	"tracemind/internal/queue"
-	"tracemind/internal/store"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/require"
 )
 
-func setupApp() *fiber.App {
+func setupApp(t *testing.T) *fiber.App {
+	t.Helper()
+
 	app := fiber.New()
-	s := store.NewStore()
+	s, cleanup := newTestPostgresStore(t)
+	t.Cleanup(cleanup)
 	q := queue.NewQueue(10)
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
@@ -26,7 +28,7 @@ func setupApp() *fiber.App {
 }
 
 func TestRootRoute(t *testing.T) {
-	app := setupApp()
+	app := setupApp(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	resp, err := app.Test(req)
 	require.NoError(t, err)
@@ -34,7 +36,7 @@ func TestRootRoute(t *testing.T) {
 }
 
 func TestIngestEndpoint(t *testing.T) {
-	app := setupApp()
+	app := setupApp(t)
 	body := `{"sourceContext":"local","signals":[{"eventType":"log","source":"svc","severity":5}]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/ingest", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
