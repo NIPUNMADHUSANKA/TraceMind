@@ -130,9 +130,9 @@ func TestIngestValidation(t *testing.T) {
 			expectedError: "signal 0: missing source",
 		},
 		{
-			name:         "accepts empty signals batch",
+			name:         "rejects empty signals batch",
 			body:         `{"sourceContext":"local","signals":[]}`,
-			expectedCode: http.StatusOK,
+			expectedCode: http.StatusBadRequest,
 			expectedOK:   0,
 			expectedBad:  0,
 		},
