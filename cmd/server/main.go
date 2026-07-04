@@ -24,12 +24,11 @@ func main() {
 
 	dbConnection, err := store.NewPostgresStore(os.Getenv("DATABASE_URL"))
 	if err != nil {
-		log.Printf("Database connection issue: %s", err.Error())
-	} else {
-		log.Println("Database connection successful")
+		log.Fatalf("Database connection issue: %s", err.Error())
 	}
+	log.Println("Database connection successful")
+	defer func() { _ = dbConnection.Close() }()
 	var dbConn store.PostgresStore = *dbConnection
-
 	q := queue.NewQueue(100)
 	stopCh := make(chan struct{})
 	stopDel := make(chan struct{})
