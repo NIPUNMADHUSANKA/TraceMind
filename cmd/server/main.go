@@ -56,6 +56,7 @@ func main() {
 		close(stopCh)
 		close(stopDel)
 		_ = app.Shutdown()
+	}()
 
 	port := os.Getenv("PORT")
 	if port == "" {

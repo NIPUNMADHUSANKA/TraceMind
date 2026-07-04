@@ -121,4 +121,5 @@ func IngestHandler(s store.PostgresStore, q chan queue.IngestionJob) fiber.Handl
 			Errors:        errs,
 		}
 		return c.Status(fiber.StatusOK).JSON(resp)
+	}
 }
