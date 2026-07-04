@@ -79,9 +79,7 @@ func IngestHandler(s store.PostgresStore, q chan queue.IngestionJob) fiber.Handl
 				parsedTimestamp = time.Now().UTC()
 			}
 
-			if sig.Message == "" {
-				signalErrs = append(signalErrs, "missing message")
-			}
+			// Message is optional; it may be empty depending on the signal type.
 
 			if len(signalErrs) > 0 {
 				rejected++
