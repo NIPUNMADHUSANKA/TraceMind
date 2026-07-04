@@ -127,7 +127,7 @@ func TestIngestValidation(t *testing.T) {
 			expectedCode:  http.StatusOK,
 			expectedOK:    0,
 			expectedBad:   1,
-			expectedError: "signal 0: missing eventType or source",
+			expectedError: "signal 0: missing source",
 		},
 		{
 			name:         "accepts empty signals batch",
