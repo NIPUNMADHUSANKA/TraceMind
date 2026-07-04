@@ -46,7 +46,7 @@ func main() {
 	apiGroup.Post("/ingest", api.IngestHandler(dbConn, q))
 	apiGroup.Get("/incidents", api.IncidentsHandler(dbConn))
 	apiGroup.Get("/incidents/:id", api.IncidentGetHandler(dbConn))
-	apiGroup.Get("health/ingestion", api.HealthHandler(q, dbConn))
+	apiGroup.Get("/health/ingestion", api.HealthHandler(q, dbConn))
 
 	go func() {
 		c := make(chan os.Signal, 1)
