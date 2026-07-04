@@ -54,9 +54,8 @@ func main() {
 		<-c
 		log.Println("shutting down")
 		close(stopCh)
-		close(stopCh)
-		app.Shutdown()
-	}()
+		close(stopDel)
+		_ = app.Shutdown()
 
 	port := os.Getenv("PORT")
 	if port == "" {
