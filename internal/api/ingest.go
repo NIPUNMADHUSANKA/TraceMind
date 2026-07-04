@@ -76,7 +76,7 @@ func IngestHandler(s store.PostgresStore, q chan queue.IngestionJob) fiber.Handl
 					parsedTimestamp = t
 				}
 			} else {
-				parsedTimestamp, _ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
+				parsedTimestamp = time.Now().UTC()
 			}
 
 			if sig.Message == "" {
