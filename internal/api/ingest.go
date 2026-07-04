@@ -109,8 +109,9 @@ func IngestHandler(s store.PostgresStore, q chan queue.IngestionJob) fiber.Handl
 			acceptedSignals = append(acceptedSignals, validated)
 			accepted++
 		}
-		ingID := uuid.NewString()
+		ingID := ""
 		if len(acceptedSignals) > 0 {
+			ingID = uuid.NewString()
 			q <- queue.IngestionJob{IngestionID: ingID, Signals: acceptedSignals}
 		}
 		resp := models.IngestResponse{
@@ -119,6 +120,5 @@ func IngestHandler(s store.PostgresStore, q chan queue.IngestionJob) fiber.Handl
 			RejectedCount: rejected,
 			Errors:        errs,
 		}
-		return c.Status(fiber.StatusAccepted).JSON(resp)
-	}
+		return c.Status(fiber.StatusOK).JSON(resp)
 }
