@@ -34,9 +34,7 @@ func StartWorker(q chan queue.IngestionJob, store store.PostgresStore, stopch <-
 func processJob(job queue.IngestionJob, store store.PostgresStore) {
 	groups := groupBySourceAndWindow(job.Signals, correlationWindow)
 	for _, g := range groups {
-		for _, s := range g.Signals {
-			store.SaveSignal(s)
-		}
+		// Signals are already persisted by the ingest handler; only correlate incidents here.
 		if groupHasHighSeverity(g) {
 			upsertIncidentForGroup(g, store, correlationWindow)
 			continue
