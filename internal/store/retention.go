@@ -5,10 +5,6 @@ import (
 	"time"
 )
 
-type signalRetentionStore interface {
-	DeleteSignalsOlderThan(cutoff time.Time) int
-}
-
 var (
 	payloadAllowListMu sync.RWMutex
 	payloadAllowList   map[string]bool
@@ -23,11 +19,14 @@ func ConfigurePayloadAllowList(keys []string) {
 		payloadAllowList = nil
 		return
 	}
-	next := make(map[string]bool, len(keys))
-	for _, k := range keys {
-		next[k] = true
+
+	if payloadAllowList == nil {
+		payloadAllowList = make(map[string]bool)
 	}
-	payloadAllowList = next
+
+	for _, k := range keys {
+		payloadAllowList[k] = true
+	}
 }
 
 func payloadAllowListSnapshot() map[string]bool {
@@ -66,17 +65,21 @@ func RedactPayloadByAllowList(payload map[string]interface{}, allowList map[stri
 }
 
 // StartRetentionEnforcer periodically deletes expired signals.
-func StartRetentionEnforcer(s PostgresStore, window time.Duration, stop <-chan struct{}) {
-	startRetentionEnforcerWithInterval(s, window, time.Hour, stop)
+func StartRetentionEnforcer(s PostgresStore, t string, window time.Duration, stop <-chan struct{}) {
+	startRetentionEnforcerWithInterval(s, t, window, time.Hour, stop)
 }
 
-func startRetentionEnforcerWithInterval(s PostgresStore, window time.Duration, interval time.Duration, stop <-chan struct{}) {
+func startRetentionEnforcerWithInterval(s PostgresStore, t string, window time.Duration, interval time.Duration, stop <-chan struct{}) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		cleanup := func() {
 			cutoff := time.Now().UTC().Add(-window)
-			s.DeleteSignalsOlderThan(cutoff)
+			if t == "signals" {
+				s.DeleteSignalsOlderThan(cutoff)
+			} else if t == "incidents" {
+				s.DeleteIncidentsOlderThan(cutoff)
+			}
 		}
 		cleanup()
 		for {

@@ -33,7 +33,12 @@ func main() {
 	stopCh := make(chan struct{})
 	stopDel := make(chan struct{})
 	worker.StartWorker(q, dbConn, stopCh)
-	store.StartRetentionEnforcer(dbConn, time.Hour*24*30, stopDel)
+	store.StartRetentionEnforcer(dbConn, "signals", time.Hour*24*30, stopDel)
+	store.StartRetentionEnforcer(dbConn, "incidents", time.Hour*24*365, stopDel)
+	/*
+		Should configure what are allow and disallow
+		store.ConfigurePayloadAllowList()
+	*/
 
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{

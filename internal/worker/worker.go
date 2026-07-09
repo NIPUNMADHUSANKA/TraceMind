@@ -107,6 +107,9 @@ func groupHasHighSeverity(g signalGroup) bool {
 	return false
 }
 
+/*
+Check can we optimize this function
+*/
 func upsertIncidentForGroup(g signalGroup, st store.PostgresStore, window time.Duration) {
 	if inc, ok := findRelatedOpenIncident(st.ListIncidents(), g.Source, g.Env, g.End, window); ok {
 		inc.SignalIDs = appendUniqueSignalIDs(inc.SignalIDs, signalIDs(g.Signals))
@@ -137,7 +140,7 @@ func mergeGroupIntoRelatedIncident(g signalGroup, st store.PostgresStore, window
 
 func findRelatedOpenIncident(incidents []models.Incident, source, env string, ts time.Time, window time.Duration) (models.Incident, bool) {
 	for _, inc := range incidents {
-		if inc.Status == "resolved" || inc.Status == "closed" {
+		if inc.Status == "resolved" || inc.Status == "closed" || inc.Status == "In-Progress" {
 			continue
 		}
 		if !contains(inc.ImpactedServices, source) || !contains(inc.Environments, env) {

@@ -190,6 +190,37 @@ WHERE ctid IN (
 	return int(affected)
 }
 
+func (p *PostgresStore) DeleteIncidentsOlderThan(cutoff time.Time) int {
+	totalDeleted := 0
+	for {
+		deleted := p.DeleteIncidentsOlderThanBatch(cutoff, signalDeleteBatchSize)
+		totalDeleted += deleted
+		if deleted < signalDeleteBatchSize {
+			return totalDeleted
+		}
+	}
+}
+
+func (p *PostgresStore) DeleteIncidentsOlderThanBatch(cutoff time.Time, batchSize int) int {
+	res, err := p.db.Exec(`DELETE FROM incidents
+	WHERE ctid IN (
+		SELECT ctid FROM incidents
+		WHERE timestamp < $1
+		ORDER BY timestamp ASC
+		LIMIT $2
+	)`, cutoff, batchSize)
+	if err != nil {
+		log.Printf("store: delete old incidents failed: %v", err)
+		return 0
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("store: rows affected for incidents delete failed: %v", err)
+		return 0
+	}
+	return int(affected)
+}
+
 func (p *PostgresStore) SaveIncident(inc models.Incident) {
 	if inc.ID == "" {
 		inc.ID = util.GenID()
