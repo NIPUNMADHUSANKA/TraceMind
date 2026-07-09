@@ -5,6 +5,7 @@ import (
 	"time"
 	"tracemind/internal/models"
 
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,17 +30,21 @@ func TestDeleteSignalsOlderThan_RemovesOnlyExpired(t *testing.T) {
 func TestStartRetentionEnforcer_DeletesOnTicker(t *testing.T) {
 	t.Parallel()
 
-	s := NewStore()
-	now := time.Now().UTC()
-	s.SaveSignal(models.Signal{ID: "old-2", EventType: "log", Source: "svc", Timestamp: now.Add(-2 * time.Hour), Severity: 2})
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := PostgresStore{db: db}
+	mock.ExpectExec("DELETE FROM signals").
+		WithArgs(sqlmock.AnyArg(), signalDeleteBatchSize).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	stop := make(chan struct{})
-	startRetentionEnforcerWithInterval(s, time.Hour, 10*time.Millisecond, stop)
+	startRetentionEnforcerWithInterval(ps, "signals", time.Hour, time.Hour, stop)
 	t.Cleanup(func() { close(stop) })
 
 	require.Eventually(t, func() bool {
-		_, ok := s.GetSignal("old-2")
-		return !ok
+		return mock.ExpectationsWereMet() == nil
 	}, time.Second, 20*time.Millisecond)
 }
 
