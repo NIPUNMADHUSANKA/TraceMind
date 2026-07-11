@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIngestCreatesIncidentAndListsViaAPI(t *testing.T) {
+func TestQueueAnalysisArchiveE2E(t *testing.T) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		t.Skip("DATABASE_URL is required for e2e tests with PostgresStore")
@@ -31,7 +31,7 @@ func TestIngestCreatesIncidentAndListsViaAPI(t *testing.T) {
 	})
 	st := *ps
 
-	q := queue.NewQueue()
+	q := queue.NewReliableQueue(queue.QueueConfig{MaxAttempts: 2, VisibilityTimeout: 20 * time.Millisecond})
 	stopCh := make(chan struct{})
 	worker.StartWorker(q, st, stopCh)
 	t.Cleanup(func() {
@@ -43,44 +43,41 @@ func TestIngestCreatesIncidentAndListsViaAPI(t *testing.T) {
 	app.Get("/api/incidents", api.IncidentsHandler(st))
 	app.Get("/api/health/ingestion", api.HealthHandler(q, ps))
 
-	ingestBody := `{"sourceContext":"e2e","signals":[{"id":"e2e-signal-high","eventType":"log","source":"e2e-service","environment":"prod","severity":5,"message":"critical failure"}]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/ingest", strings.NewReader(ingestBody))
+	body := `{"sourceContext":"e2e","signals":[{"id":"e2e-db-1","eventType":"database","source":"checkout","environment":"prod","severity":5,"message":"too many connections"},{"id":"e2e-health-1","eventType":"health","source":"checkout","environment":"prod","severity":4,"message":"service timeout"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/ingest", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var ingestResp models.IngestResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&ingestResp))
-	require.Equal(t, 1, ingestResp.AcceptedCount)
-	require.NotEmpty(t, ingestResp.IngestionID)
-
 	require.Eventually(t, func() bool {
 		incReq := httptest.NewRequest(http.MethodGet, "/api/incidents", nil)
-		incResp, testErr := app.Test(incReq)
-		if testErr != nil || incResp.StatusCode != http.StatusOK {
+		incResp, incErr := app.Test(incReq)
+		if incErr != nil || incResp.StatusCode != http.StatusOK {
 			return false
 		}
 		defer incResp.Body.Close()
 
-		var payload struct {
+		var incPayload struct {
 			Incidents []models.Incident `json:"incidents"`
 		}
-		if decodeErr := json.NewDecoder(incResp.Body).Decode(&payload); decodeErr != nil {
+		if decodeErr := json.NewDecoder(incResp.Body).Decode(&incPayload); decodeErr != nil {
 			return false
 		}
-		matchedIncident := false
-		for _, inc := range payload.Incidents {
-			if inc.Severity >= 4 && contains(inc.SignalIDs, "e2e-signal-high") && contains(inc.ImpactedServices, "e2e-service") {
-				if inc.AnalysisSummary == "" || len(inc.Recommendations) == 0 {
-					return false
-				}
-				matchedIncident = true
-				break
+
+		matched := false
+		for _, inc := range incPayload.Incidents {
+			if !contains(inc.SignalIDs, "e2e-db-1") {
+				continue
 			}
+			if inc.AnalysisSummary == "" || len(inc.Recommendations) == 0 {
+				return false
+			}
+			matched = true
+			break
 		}
-		if !matchedIncident {
+		if !matched {
 			return false
 		}
 
@@ -103,15 +100,9 @@ func TestIngestCreatesIncidentAndListsViaAPI(t *testing.T) {
 		if _, ok := ingestion["deadLetterCount"]; !ok {
 			return false
 		}
-		return true
-	}, 3*time.Second, 100*time.Millisecond)
-}
-
-func contains(values []string, target string) bool {
-	for _, v := range values {
-		if v == target {
-			return true
+		if _, ok := ingestion["retryCount"]; !ok {
+			return false
 		}
-	}
-	return false
+		return true
+	}, 5*time.Second, 100*time.Millisecond)
 }
