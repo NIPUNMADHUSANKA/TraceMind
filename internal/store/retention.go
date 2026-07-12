@@ -69,15 +69,22 @@ func StartRetentionEnforcer(s PostgresStore, t string, window time.Duration, sto
 	startRetentionEnforcerWithInterval(s, t, window, time.Hour, stop)
 }
 
+func StartProfileRetentionEnforcers(s PostgresStore, env string, stop <-chan struct{}) {
+	profile := RetentionProfileForEnvironment(env)
+	StartRetentionEnforcer(s, "signals", profile.RawWindow, stop)
+	StartRetentionEnforcer(s, "incidents", profile.NormalizedWindow, stop)
+}
+
 func startRetentionEnforcerWithInterval(s PostgresStore, t string, window time.Duration, interval time.Duration, stop <-chan struct{}) {
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		cleanup := func() {
 			cutoff := time.Now().UTC().Add(-window)
-			if t == "signals" {
+			switch t {
+			case "signals":
 				s.DeleteSignalsOlderThan(cutoff)
-			} else if t == "incidents" {
+			case "incidents":
 				s.DeleteIncidentsOlderThan(cutoff)
 			}
 		}

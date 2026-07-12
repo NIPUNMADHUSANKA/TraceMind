@@ -7,12 +7,21 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-func HealthHandler(q chan queue.IngestionJob, s store.PostgresStore) fiber.Handler {
+type queueStatsProvider interface {
+	Stats() queue.QueueStats
+}
+
+func HealthHandler(q queueStatsProvider, s store.PostgresStore) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		pending := len(q)
+		stats := q.Stats()
 		incCount := len(s.ListIncidents())
 		return c.JSON(fiber.Map{
-			"ingestion": fiber.Map{"queueDepth": pending},
+			"ingestion": fiber.Map{
+				"queueDepth":             stats.Depth,
+				"retryCount":             stats.RetryCount,
+				"deadLetterCount":        stats.DeadLetterCount,
+				"lastProcessedTimestamp": stats.LastProcessedTimestamp,
+			},
 			"incidents": incCount,
 		})
 	}

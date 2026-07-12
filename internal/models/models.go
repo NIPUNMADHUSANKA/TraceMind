@@ -48,7 +48,7 @@ type Incident struct {
 type AnalysisResult struct {
 	IncidentID      string    `json:"incidentId"`
 	Hypotheses      []string  `json:"rootCauseHypotheses"`
-	Confidence      []string  `json:"confidenceScores"`
+	Confidence      []float64 `json:"confidenceScores"`
 	Recommendations []string  `json:"recommendedActions"`
 	Timestamp       time.Time `json:"analysisTimestamp"`
 	Source          string    `json:"source"`

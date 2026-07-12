@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 	"tracemind/internal/api"
 	"tracemind/internal/queue"
 	"tracemind/internal/store"
@@ -29,12 +28,11 @@ func main() {
 	log.Println("Database connection successful")
 	defer func() { _ = dbConnection.Close() }()
 	var dbConn store.PostgresStore = *dbConnection
-	q := queue.NewQueue(100)
+	q := queue.NewQueue()
 	stopCh := make(chan struct{})
 	stopDel := make(chan struct{})
 	worker.StartWorker(q, dbConn, stopCh)
-	store.StartRetentionEnforcer(dbConn, "signals", time.Hour*24*30, stopDel)
-	store.StartRetentionEnforcer(dbConn, "incidents", time.Hour*24*365, stopDel)
+	store.StartProfileRetentionEnforcers(dbConn, os.Getenv("APP_ENV"), stopDel)
 	/*
 		Should configure what are allow and disallow
 		store.ConfigurePayloadAllowList()

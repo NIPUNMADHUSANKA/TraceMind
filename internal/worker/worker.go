@@ -1,10 +1,13 @@
 package worker
 
 import (
+	"context"
+	"errors"
 	"log"
 	"sort"
 	"strings"
 	"time"
+	"tracemind/internal/analysis"
 	"tracemind/internal/models"
 	"tracemind/internal/queue"
 	"tracemind/internal/store"
@@ -12,20 +15,49 @@ import (
 
 const correlationWindow = time.Minute
 
-func StartWorker(q chan queue.IngestionJob, store store.PostgresStore, stopch <-chan struct{}) {
+type deliveryQueue interface {
+	Dequeue(context.Context) (queue.Delivery, error)
+	Ack(string) error
+	Nack(string, string) error
+}
+
+var processDelivery = func(job queue.IngestionJob, st store.PostgresStore) error {
+	processJob(job, st)
+	return nil
+}
+
+var incidentAnalyzer = analysis.NewRuleEngine()
+
+func StartWorker(q deliveryQueue, st store.PostgresStore, stopch <-chan struct{}) {
 	go func() {
 		for {
 			select {
-			case job, ok := <-q:
-				if !ok {
-					log.Println("worker: queue closed")
-					return
-				}
-				processJob(job, store)
 			case <-stopch:
 				log.Println("worker: stopping")
 				return
+			default:
+			}
 
+			delivery, err := q.Dequeue(context.Background())
+			if err != nil {
+				if errors.Is(err, queue.ErrQueueEmpty) {
+					time.Sleep(10 * time.Millisecond)
+					continue
+				}
+				log.Printf("worker: dequeue failed: %v", err)
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+
+			if err := processDelivery(delivery.Job, st); err != nil {
+				if nackErr := q.Nack(delivery.Receipt, err.Error()); nackErr != nil {
+					log.Printf("worker: nack failed for receipt %s: %v", delivery.Receipt, nackErr)
+				}
+				continue
+			}
+
+			if err := q.Ack(delivery.Receipt); err != nil {
+				log.Printf("worker: ack failed for receipt %s: %v", delivery.Receipt, err)
 			}
 		}
 	}()
@@ -115,17 +147,20 @@ func upsertIncidentForGroup(g signalGroup, st store.PostgresStore, window time.D
 		inc.SignalIDs = appendUniqueSignalIDs(inc.SignalIDs, signalIDs(g.Signals))
 		inc.Severity = maxSeverity(inc.Severity, maxGroupSeverity(g))
 		inc.UpdatedAt = time.Now().UTC()
+		attachAnalysis(&inc, g.Signals)
 		st.SaveIncident(inc)
 		return
 	}
-	st.SaveIncident(models.Incident{
+	inc := models.Incident{
 		Title:            "Auto-generated incident",
 		Status:           "new",
 		Severity:         maxGroupSeverity(g),
 		SignalIDs:        signalIDs(g.Signals),
 		ImpactedServices: []string{g.Source},
 		Environments:     []string{g.Env},
-	})
+	}
+	attachAnalysis(&inc, g.Signals)
+	st.SaveIncident(inc)
 }
 
 func mergeGroupIntoRelatedIncident(g signalGroup, st store.PostgresStore, window time.Duration) {
@@ -135,7 +170,17 @@ func mergeGroupIntoRelatedIncident(g signalGroup, st store.PostgresStore, window
 	}
 	inc.SignalIDs = appendUniqueSignalIDs(inc.SignalIDs, signalIDs(g.Signals))
 	inc.UpdatedAt = time.Now().UTC()
+	attachAnalysis(&inc, g.Signals)
 	st.SaveIncident(inc)
+}
+
+func attachAnalysis(incident *models.Incident, evidence []models.Signal) {
+	if incident == nil {
+		return
+	}
+	result := incidentAnalyzer.Analyze(*incident, evidence)
+	incident.AnalysisSummary = strings.Join(result.Hypotheses, "; ")
+	incident.Recommendations = append(incident.Recommendations, result.Recommendations...)
 }
 
 func findRelatedOpenIncident(incidents []models.Incident, source, env string, ts time.Time, window time.Duration) (models.Incident, bool) {

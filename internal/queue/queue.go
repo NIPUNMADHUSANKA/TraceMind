@@ -1,12 +1,6 @@
 package queue
 
-import "tracemind/internal/models"
-
-type IngestionJob struct {
-	IngestionID string
-	Signals     []models.Signal
-}
-
-func NewQueue(size int) chan IngestionJob {
-	return make(chan IngestionJob, size)
+// NewQueue returns the durable in-memory queue used by API and worker wiring.
+func NewQueue() *ReliableQueue {
+	return NewReliableQueue(QueueConfig{})
 }
