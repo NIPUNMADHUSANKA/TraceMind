@@ -32,6 +32,12 @@ func main() {
 	stopCh := make(chan struct{})
 	stopDel := make(chan struct{})
 	worker.StartWorker(q, dbConn, stopCh)
+
+	env := os.Getenv("APP_ENV")
+	if env == "" {
+		env = "staging"
+	}
+
 	store.StartProfileRetentionEnforcers(dbConn, os.Getenv("APP_ENV"), stopDel)
 	/*
 		Should configure what are allow and disallow

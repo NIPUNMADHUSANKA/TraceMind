@@ -84,6 +84,7 @@ func TestProcessJob_MergesIntoExistingIncident_WhenRelated(t *testing.T) {
 	require.True(t, ok)
 	require.ElementsMatch(t, []string{"prev", "n1"}, inc.SignalIDs)
 	require.Equal(t, 5, inc.Severity)
+	require.Equal(t, "In-Progress", inc.Status)
 }
 
 func TestProcessJob_AttachesAnalysisToIncident(t *testing.T) {

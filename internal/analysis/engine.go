@@ -28,6 +28,10 @@ func (e *ruleEngine) Analyze(incident models.Incident, evidence []models.Signal)
 		hypotheses = append(hypotheses, match.hypothesis)
 		recommendations = append(recommendations, match.recommendations...)
 	}
+	if match, ok := detectQueueBacklog(evidence); ok {
+		hypotheses = append(hypotheses, match.hypothesis)
+		recommendations = append(recommendations, match.recommendations...)
+	}
 
 	source := "rule-based"
 	if len(hypotheses) == 0 {

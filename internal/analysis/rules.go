@@ -55,6 +55,37 @@ func detectDatabaseFailure(evidence []models.Signal) (ruleMatch, bool) {
 	}, true
 }
 
+func detectQueueBacklog(evidence []models.Signal) (ruleMatch, bool) {
+	hasQueueSignal := false
+	hasBacklogIndicator := false
+
+	for _, signal := range evidence {
+		if signal.EventType != "queue" {
+			continue
+		}
+		hasQueueSignal = true
+		if signal.Severity >= 4 || messageContainsAny(signal.Message, "backlog", "lag", "depth", "threshold", "stuck") {
+			hasBacklogIndicator = true
+		}
+	}
+
+	if !hasQueueSignal || !hasBacklogIndicator {
+		return ruleMatch{}, false
+	}
+
+	if !hasHealthDegradation(evidence) {
+		return ruleMatch{}, false
+	}
+
+	return ruleMatch{
+		hypothesis: "queue backlog is degrading end-to-end processing health",
+		recommendations: []string{
+			"Inspect consumer throughput and retry rates to identify processing bottlenecks.",
+			"Scale workers or tune visibility timeout before queue latency breaches SLOs.",
+		},
+	}, true
+}
+
 func hasEventType(evidence []models.Signal, eventType string) bool {
 	for _, signal := range evidence {
 		if signal.EventType == eventType {

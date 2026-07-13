@@ -41,7 +41,7 @@ func TestQueueAnalysisArchiveE2E(t *testing.T) {
 	app := fiber.New()
 	app.Post("/api/ingest", api.IngestHandler(st, q))
 	app.Get("/api/incidents", api.IncidentsHandler(st))
-	app.Get("/api/health/ingestion", api.HealthHandler(q, ps))
+	app.Get("/api/health/ingestion", api.HealthHandler(q, st))
 
 	body := `{"sourceContext":"e2e","signals":[{"id":"e2e-db-1","eventType":"database","source":"checkout","environment":"prod","severity":5,"message":"too many connections"},{"id":"e2e-health-1","eventType":"health","source":"checkout","environment":"prod","severity":4,"message":"service timeout"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/ingest", strings.NewReader(body))

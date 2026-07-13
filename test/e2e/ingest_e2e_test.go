@@ -41,7 +41,7 @@ func TestIngestCreatesIncidentAndListsViaAPI(t *testing.T) {
 	app := fiber.New()
 	app.Post("/api/ingest", api.IngestHandler(st, q))
 	app.Get("/api/incidents", api.IncidentsHandler(st))
-	app.Get("/api/health/ingestion", api.HealthHandler(q, ps))
+	app.Get("/api/health/ingestion", api.HealthHandler(q, st))
 
 	ingestBody := `{"sourceContext":"e2e","signals":[{"id":"e2e-signal-high","eventType":"log","source":"e2e-service","environment":"prod","severity":5,"message":"critical failure"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/api/ingest", strings.NewReader(ingestBody))

@@ -51,6 +51,19 @@ func TestRuleEngine_QueueBacklogPattern(t *testing.T) {
 	require.Equal(t, "rule-based", result.Source)
 }
 
+func TestRuleEngine_QueueBacklogRequiresHealthDegradation(t *testing.T) {
+	t.Parallel()
+
+	engine := NewRuleEngine()
+	result := engine.Analyze(models.Incident{ID: "inc-queue-no-health"}, []models.Signal{
+		{EventType: "queue", Severity: 5, Message: "queue backlog crossed threshold"},
+		{EventType: "health", Severity: 2, Message: "service healthy"},
+	})
+
+	require.Equal(t, "hybrid", result.Source)
+	require.NotContains(t, strings.Join(result.Hypotheses, " "), "queue")
+}
+
 func TestRuleEngine_HybridFallbackWhenNoDeterministicEvidence(t *testing.T) {
 	t.Parallel()
 

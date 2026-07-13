@@ -147,7 +147,7 @@ func upsertIncidentForGroup(g signalGroup, st store.PostgresStore, window time.D
 		inc.SignalIDs = appendUniqueSignalIDs(inc.SignalIDs, signalIDs(g.Signals))
 		inc.Severity = maxSeverity(inc.Severity, maxGroupSeverity(g))
 		inc.UpdatedAt = time.Now().UTC()
-		attachAnalysis(&inc, g.Signals)
+		attachAnalysis(&inc, g.Signals, st)
 		st.SaveIncident(inc)
 		return
 	}
@@ -159,7 +159,7 @@ func upsertIncidentForGroup(g signalGroup, st store.PostgresStore, window time.D
 		ImpactedServices: []string{g.Source},
 		Environments:     []string{g.Env},
 	}
-	attachAnalysis(&inc, g.Signals)
+	attachAnalysis(&inc, g.Signals, st)
 	st.SaveIncident(inc)
 }
 
@@ -170,22 +170,26 @@ func mergeGroupIntoRelatedIncident(g signalGroup, st store.PostgresStore, window
 	}
 	inc.SignalIDs = appendUniqueSignalIDs(inc.SignalIDs, signalIDs(g.Signals))
 	inc.UpdatedAt = time.Now().UTC()
-	attachAnalysis(&inc, g.Signals)
+	attachAnalysis(&inc, g.Signals, st)
 	st.SaveIncident(inc)
 }
 
-func attachAnalysis(incident *models.Incident, evidence []models.Signal) {
+func attachAnalysis(incident *models.Incident, evidence []models.Signal, st store.PostgresStore) {
 	if incident == nil {
 		return
 	}
+	incident.Status = "in-progress"
+	_ = st.UpdateIncidentStatus(incident.ID, incident.Status)
 	result := incidentAnalyzer.Analyze(*incident, evidence)
 	incident.AnalysisSummary = strings.Join(result.Hypotheses, "; ")
 	incident.Recommendations = append(incident.Recommendations, result.Recommendations...)
+	incident.Status = "resolved"
+	_ = st.UpdateIncidentStatus(incident.ID, incident.Status)
 }
 
 func findRelatedOpenIncident(incidents []models.Incident, source, env string, ts time.Time, window time.Duration) (models.Incident, bool) {
 	for _, inc := range incidents {
-		if inc.Status == "resolved" || inc.Status == "closed" || inc.Status == "In-Progress" {
+		if strings.ToLower(inc.Status) == "resolved" || strings.ToLower(inc.Status) == "closed" || strings.ToLower(inc.Status) == "in-progress" {
 			continue
 		}
 		if !contains(inc.ImpactedServices, source) || !contains(inc.Environments, env) {
