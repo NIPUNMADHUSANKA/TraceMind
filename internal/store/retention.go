@@ -1,6 +1,7 @@
 package store
 
 import (
+	"log"
 	"sync"
 	"time"
 )
@@ -12,19 +13,23 @@ var (
 
 // ConfigurePayloadAllowList sets the payload keys that are retained when saving signals.
 // If no keys are configured, payload values are stored as-is.
-func ConfigurePayloadAllowList(keys []string) {
+func ConfigurePayloadAllowList(s PostgresStore, env string) {
+	allow, _, err := s.GetPayloadFilterConfig(env)
 	payloadAllowListMu.Lock()
 	defer payloadAllowListMu.Unlock()
-	if len(keys) == 0 {
+	if err != nil {
+		log.Printf("store: load payload filter config failed: %v", err)
+		payloadAllowList = nil
+		return
+	}
+	if len(allow) == 0 {
 		payloadAllowList = nil
 		return
 	}
 
-	if payloadAllowList == nil {
-		payloadAllowList = make(map[string]bool)
-	}
+	payloadAllowList = make(map[string]bool, len(allow))
 
-	for _, k := range keys {
+	for _, k := range allow {
 		payloadAllowList[k] = true
 	}
 }

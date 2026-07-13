@@ -38,11 +38,9 @@ func main() {
 		env = "staging"
 	}
 
-	store.StartProfileRetentionEnforcers(dbConn, os.Getenv("APP_ENV"), stopDel)
-	/*
-		Should configure what are allow and disallow
-		store.ConfigurePayloadAllowList()
-	*/
+	store.StartProfileRetentionEnforcers(dbConn, env, stopDel)
+
+	store.ConfigurePayloadAllowList(dbConn, env)
 
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{

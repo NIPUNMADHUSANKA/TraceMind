@@ -160,6 +160,58 @@ func TestPostgresStore_UpdateIncidentStatus_ValidatesInput(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestPostgresStore_SavePayloadFilterConfig_Upserts(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := &PostgresStore{db: db}
+
+	mock.ExpectExec("INSERT INTO payload_filter_configs").
+		WithArgs("staging", sqlmock.AnyArg(), sqlmock.AnyArg(), nonZeroTimeMatcher{}).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err = ps.SavePayloadFilterConfig("staging", []string{"requestId", "traceId"}, []string{"password", "token"})
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresStore_SavePayloadFilterConfig_ValidatesInput(t *testing.T) {
+	t.Parallel()
+
+	db, _, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := &PostgresStore{db: db}
+	err = ps.SavePayloadFilterConfig("", nil, nil)
+	require.Error(t, err)
+}
+
+func TestPostgresStore_GetPayloadFilterConfig_LoadsLists(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := &PostgresStore{db: db}
+	rows := sqlmock.NewRows([]string{"allow_list", "disallow_list"}).
+		AddRow([]byte(`["requestId","traceId"]`), []byte(`["password","token"]`))
+
+	mock.ExpectQuery("SELECT allow_list, disallow_list FROM payload_filter_configs WHERE environment = \\$1").
+		WithArgs("staging").
+		WillReturnRows(rows)
+
+	allowList, disallowList, err := ps.GetPayloadFilterConfig("staging")
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"requestId", "traceId"}, allowList)
+	require.ElementsMatch(t, []string{"password", "token"}, disallowList)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestPostgresStore_GetSignal_InvalidJSON_ReturnsFalse(t *testing.T) {
 	t.Parallel()
 

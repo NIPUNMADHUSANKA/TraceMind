@@ -77,6 +77,19 @@ CREATE TABLE IF NOT EXISTS incidents (
 		return nil, err
 	}
 
+	_, err = db.Exec(`
+CREATE TABLE IF NOT EXISTS payload_filter_configs (
+    environment text PRIMARY KEY,
+    allow_list jsonb NOT NULL,
+    disallow_list jsonb NOT NULL,
+    updated_at timestamptz NOT NULL
+);
+`)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	return &PostgresStore{db: db}, nil
 }
 
@@ -205,8 +218,8 @@ func (p *PostgresStore) DeleteIncidentsOlderThanBatch(cutoff time.Time, batchSiz
 	res, err := p.db.Exec(`DELETE FROM incidents
 	WHERE ctid IN (
 		SELECT ctid FROM incidents
-		WHERE timestamp < $1
-		ORDER BY timestamp ASC
+		WHERE COALESCE(updated_at, created_at) < $1
+		ORDER BY COALESCE(updated_at, created_at) ASC
 		LIMIT $2
 	)`, cutoff, batchSize)
 	if err != nil {
@@ -301,6 +314,63 @@ func (p *PostgresStore) UpdateIncidentStatus(id string, status string) error {
 	}
 
 	return nil
+}
+
+func (p *PostgresStore) SavePayloadFilterConfig(environment string, allowList []string, disallowList []string) error {
+	if environment == "" {
+		return errors.New("store: environment is required")
+	}
+
+	allowJSON, err := json.Marshal(allowList)
+	if err != nil {
+		return err
+	}
+	disallowJSON, err := json.Marshal(disallowList)
+	if err != nil {
+		return err
+	}
+
+	_, err = p.db.Exec(`INSERT INTO payload_filter_configs (environment, allow_list, disallow_list, updated_at)
+VALUES ($1,$2,$3,$4)
+ON CONFLICT (environment) DO UPDATE SET
+    allow_list = EXCLUDED.allow_list,
+    disallow_list = EXCLUDED.disallow_list,
+    updated_at = EXCLUDED.updated_at`,
+		environment,
+		allowJSON,
+		disallowJSON,
+		time.Now().UTC(),
+	)
+	return err
+}
+
+func (p *PostgresStore) GetPayloadFilterConfig(environment string) ([]string, []string, error) {
+	if environment == "" {
+		return nil, nil, errors.New("store: environment is required")
+	}
+
+	row := p.db.QueryRow(`SELECT allow_list, disallow_list FROM payload_filter_configs WHERE environment = $1`, environment)
+	var allowJSON []byte
+	var disallowJSON []byte
+	if err := row.Scan(&allowJSON, &disallowJSON); err != nil {
+		return nil, nil, err
+	}
+
+	allowList := make([]string, 0)
+	if len(allowJSON) > 0 {
+		if err := json.Unmarshal(allowJSON, &allowList); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	disallowList := make([]string, 0)
+	if len(disallowJSON) > 0 {
+		if err := json.Unmarshal(disallowJSON, &disallowList); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return allowList, disallowList, nil
 }
 
 func (p *PostgresStore) ListIncidents() []models.Incident {
