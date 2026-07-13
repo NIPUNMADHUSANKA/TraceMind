@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 	"tracemind/internal/models"
@@ -85,6 +86,10 @@ func (p *PostgresStore) Close() error {
 		return nil
 	}
 	return p.db.Close()
+}
+
+func (p *PostgresStore) IsInitialized() bool {
+	return p != nil && p.db != nil
 }
 
 func (p *PostgresStore) SaveSignal(sig models.Signal) {
@@ -222,6 +227,16 @@ func (p *PostgresStore) DeleteIncidentsOlderThanBatch(cutoff time.Time, batchSiz
 }
 
 func (p *PostgresStore) SaveIncident(inc models.Incident) {
+	if err := p.SaveIncidentWithError(inc); err != nil {
+		log.Printf("store: save incident failed: %v", err)
+	}
+}
+
+func (p *PostgresStore) SaveIncidentWithError(inc models.Incident) error {
+	if p == nil || p.db == nil {
+		return fmt.Errorf("store: postgres connection is not initialized")
+	}
+
 	if inc.ID == "" {
 		inc.ID = util.GenID()
 	}
@@ -232,23 +247,19 @@ func (p *PostgresStore) SaveIncident(inc models.Incident) {
 
 	signalIDsJSON, err := json.Marshal(inc.SignalIDs)
 	if err != nil {
-		log.Printf("store: marshal incident signal IDs failed: %v", err)
-		return
+		return fmt.Errorf("marshal incident signal IDs: %w", err)
 	}
 	impactedJSON, err := json.Marshal(inc.ImpactedServices)
 	if err != nil {
-		log.Printf("store: marshal incident impacted services failed: %v", err)
-		return
+		return fmt.Errorf("marshal incident impacted services: %w", err)
 	}
 	envJSON, err := json.Marshal(inc.Environments)
 	if err != nil {
-		log.Printf("store: marshal incident environments failed: %v", err)
-		return
+		return fmt.Errorf("marshal incident environments: %w", err)
 	}
 	recommendationsJSON, err := json.Marshal(inc.Recommendations)
 	if err != nil {
-		log.Printf("store: marshal incident recommendations failed: %v", err)
-		return
+		return fmt.Errorf("marshal incident recommendations: %w", err)
 	}
 	_, err = p.db.Exec(`INSERT INTO incidents (id, title, status, severity, impacted_services, environments, signal_ids, analysis_summary, recommendations, created_at, updated_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -274,8 +285,9 @@ ON CONFLICT (id) DO UPDATE SET
 		inc.CreatedAt,
 		inc.UpdatedAt)
 	if err != nil {
-		log.Printf("store: save incident failed: %v", err)
+		return fmt.Errorf("exec save incident: %w", err)
 	}
+	return nil
 }
 
 func (p *PostgresStore) ListIncidents() []models.Incident {

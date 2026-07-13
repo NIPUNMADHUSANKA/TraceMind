@@ -40,7 +40,7 @@ func TestProcessJob_CreatesIncidentForHighSeverityGroup(t *testing.T) {
 		{ID: "h2", EventType: "log", Source: "svc-a", Env: "prod", Timestamp: base.Add(5 * time.Second), Severity: 4},
 	})
 
-	processJob(job, s)
+	require.NoError(t, processJob(job, s))
 
 	incidents := s.ListIncidents()
 	var found *models.Incident
@@ -78,7 +78,7 @@ func TestProcessJob_MergesIntoExistingIncident_WhenRelated(t *testing.T) {
 		{ID: "n1", EventType: "log", Source: "svc-a", Env: "prod", Timestamp: base.Add(10 * time.Second), Severity: 5},
 	})
 
-	processJob(job, s)
+	require.NoError(t, processJob(job, s))
 
 	inc, ok := s.GetIncident("inc-existing")
 	require.True(t, ok)
@@ -98,7 +98,7 @@ func TestProcessJob_AttachesAnalysisToIncident(t *testing.T) {
 		{ID: "a-health-1", EventType: "health", Source: "svc-a", Env: "prod", Timestamp: base.Add(5 * time.Second), Severity: 4, Message: "service timeout"},
 	})
 
-	processJob(job, s)
+	require.NoError(t, processJob(job, s))
 
 	incidents := s.ListIncidents()
 	var found *models.Incident
@@ -149,6 +149,18 @@ func TestWorker_NacksDeliveryOnProcessingError(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("expected delivery to be nacked")
 	}
+}
+
+func TestProcessDelivery_ReturnsErrorWhenStoreUnavailable(t *testing.T) {
+	t.Parallel()
+
+	job := ingestionJobForTest([]models.Signal{
+		{ID: "h1", EventType: "log", Source: "svc-a", Env: "prod", Timestamp: time.Now().UTC(), Severity: 5},
+	})
+
+	err := processDelivery(job, store.PostgresStore{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "postgres connection is not initialized")
 }
 
 func ingestionJobForTest(signals []models.Signal) queueIngestionJobAlias {

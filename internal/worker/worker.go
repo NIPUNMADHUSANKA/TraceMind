@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"sort"
 	"strings"
@@ -22,8 +23,7 @@ type deliveryQueue interface {
 }
 
 var processDelivery = func(job queue.IngestionJob, st store.PostgresStore) error {
-	processJob(job, st)
-	return nil
+	return processJob(job, st)
 }
 
 var incidentAnalyzer = analysis.NewRuleEngine()
@@ -63,17 +63,26 @@ func StartWorker(q deliveryQueue, st store.PostgresStore, stopch <-chan struct{}
 	}()
 }
 
-func processJob(job queue.IngestionJob, store store.PostgresStore) {
+func processJob(job queue.IngestionJob, store store.PostgresStore) error {
+	if !store.IsInitialized() {
+		return fmt.Errorf("postgres connection is not initialized")
+	}
+
 	groups := groupBySourceAndWindow(job.Signals, correlationWindow)
 	for _, g := range groups {
 		// Signals are already persisted by the ingest handler; only correlate incidents here.
 		if groupHasHighSeverity(g) {
-			upsertIncidentForGroup(g, store, correlationWindow)
+			if err := upsertIncidentForGroup(g, store, correlationWindow); err != nil {
+				return err
+			}
 			continue
 		}
-		mergeGroupIntoRelatedIncident(g, store, correlationWindow)
+		if err := mergeGroupIntoRelatedIncident(g, store, correlationWindow); err != nil {
+			return err
+		}
 	}
 	time.Sleep(100 * time.Millisecond)
+	return nil
 }
 
 type signalGroup struct {
@@ -142,14 +151,16 @@ func groupHasHighSeverity(g signalGroup) bool {
 /*
 Check can we optimize this function
 */
-func upsertIncidentForGroup(g signalGroup, st store.PostgresStore, window time.Duration) {
+func upsertIncidentForGroup(g signalGroup, st store.PostgresStore, window time.Duration) error {
 	if inc, ok := findRelatedOpenIncident(st.ListIncidents(), g.Source, g.Env, g.End, window); ok {
 		inc.SignalIDs = appendUniqueSignalIDs(inc.SignalIDs, signalIDs(g.Signals))
 		inc.Severity = maxSeverity(inc.Severity, maxGroupSeverity(g))
 		inc.UpdatedAt = time.Now().UTC()
 		attachAnalysis(&inc, g.Signals)
-		st.SaveIncident(inc)
-		return
+		if err := st.SaveIncidentWithError(inc); err != nil {
+			return fmt.Errorf("update incident %s: %w", inc.ID, err)
+		}
+		return nil
 	}
 	inc := models.Incident{
 		Title:            "Auto-generated incident",
@@ -160,18 +171,24 @@ func upsertIncidentForGroup(g signalGroup, st store.PostgresStore, window time.D
 		Environments:     []string{g.Env},
 	}
 	attachAnalysis(&inc, g.Signals)
-	st.SaveIncident(inc)
+	if err := st.SaveIncidentWithError(inc); err != nil {
+		return fmt.Errorf("create incident: %w", err)
+	}
+	return nil
 }
 
-func mergeGroupIntoRelatedIncident(g signalGroup, st store.PostgresStore, window time.Duration) {
+func mergeGroupIntoRelatedIncident(g signalGroup, st store.PostgresStore, window time.Duration) error {
 	inc, ok := findRelatedOpenIncident(st.ListIncidents(), g.Source, g.Env, g.End, window)
 	if !ok {
-		return
+		return nil
 	}
 	inc.SignalIDs = appendUniqueSignalIDs(inc.SignalIDs, signalIDs(g.Signals))
 	inc.UpdatedAt = time.Now().UTC()
 	attachAnalysis(&inc, g.Signals)
-	st.SaveIncident(inc)
+	if err := st.SaveIncidentWithError(inc); err != nil {
+		return fmt.Errorf("merge incident %s: %w", inc.ID, err)
+	}
+	return nil
 }
 
 func attachAnalysis(incident *models.Incident, evidence []models.Signal) {
