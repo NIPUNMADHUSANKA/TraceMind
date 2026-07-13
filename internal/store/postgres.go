@@ -278,6 +278,31 @@ ON CONFLICT (id) DO UPDATE SET
 	}
 }
 
+func (p *PostgresStore) UpdateIncidentStatus(id string, status string) error {
+	if id == "" {
+		return errors.New("store: incident id is required")
+	}
+	if status == "" {
+		return errors.New("store: incident status is required")
+	}
+
+	updatedAt := time.Now().UTC()
+	res, err := p.db.Exec(`UPDATE incidents SET status = $2, updated_at = $3 WHERE id = $1`, id, status, updatedAt)
+	if err != nil {
+		return err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
 func (p *PostgresStore) ListIncidents() []models.Incident {
 	rows, err := p.db.Query(`SELECT id, title, status, severity, impacted_services, environments, signal_ids, analysis_summary, recommendations, created_at, updated_at FROM incidents`)
 	if err != nil {

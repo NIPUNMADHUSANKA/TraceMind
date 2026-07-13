@@ -1,7 +1,9 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,13 +17,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setupIngestApp(t *testing.T) (*fiber.App, chan queue.IngestionJob) {
+func setupIngestApp(t *testing.T) (*fiber.App, *queue.ReliableQueue) {
 	t.Helper()
 
 	app := fiber.New()
 	s, cleanup := newTestPostgresStore(t)
 	t.Cleanup(cleanup)
-	q := queue.NewQueue(10)
+	q := queue.NewQueue()
 	app.Post("/api/ingest", api.IngestHandler(s, q))
 	return app, q
 }
@@ -182,14 +184,11 @@ func TestIngestValidation_QueuesOnlyAcceptedSignals(t *testing.T) {
 	require.Equal(t, 1, got.AcceptedCount)
 	require.Equal(t, 2, got.RejectedCount)
 
-	select {
-	case job := <-q:
-		require.Len(t, job.Signals, 1)
-		require.Equal(t, "svc-a", job.Signals[0].Source)
-		require.Equal(t, "log", job.Signals[0].EventType)
-	default:
-		t.Fatal("expected one ingestion job in queue")
-	}
+	delivery, err := q.Dequeue(context.Background())
+	require.NoError(t, err)
+	require.Len(t, delivery.Job.Signals, 1)
+	require.Equal(t, "svc-a", delivery.Job.Signals[0].Source)
+	require.Equal(t, "log", delivery.Job.Signals[0].EventType)
 }
 
 func TestIngestValidation_AllRejectedHasNoIngestionID(t *testing.T) {
@@ -204,9 +203,7 @@ func TestIngestValidation_AllRejectedHasNoIngestionID(t *testing.T) {
 	require.Equal(t, 1, got.RejectedCount)
 	require.Equal(t, "", got.IngestionID)
 
-	select {
-	case <-q:
-		t.Fatal("did not expect any ingestion job in queue")
-	default:
-	}
+	_, err := q.Dequeue(context.Background())
+	require.Error(t, err)
+	require.True(t, errors.Is(err, queue.ErrQueueEmpty))
 }

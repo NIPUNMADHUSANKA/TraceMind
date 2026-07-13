@@ -19,7 +19,7 @@ func setupApp(t *testing.T) *fiber.App {
 	app := fiber.New()
 	s, cleanup := newTestPostgresStore(t)
 	t.Cleanup(cleanup)
-	q := queue.NewQueue(10)
+	q := queue.NewQueue()
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})

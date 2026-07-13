@@ -36,7 +36,11 @@ type ingestSignalInput struct {
 	Metadata  map[string]string      `json:"metadata,omitempty"`
 }
 
-func IngestHandler(s store.PostgresStore, q chan queue.IngestionJob) fiber.Handler {
+type ingestQueue interface {
+	Enqueue(job queue.IngestionJob) error
+}
+
+func IngestHandler(s store.PostgresStore, q ingestQueue) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req ingestRequestInput
 		if err := c.BodyParser(&req); err != nil {
@@ -112,7 +116,9 @@ func IngestHandler(s store.PostgresStore, q chan queue.IngestionJob) fiber.Handl
 		ingID := ""
 		if len(acceptedSignals) > 0 {
 			ingID = uuid.NewString()
-			q <- queue.IngestionJob{IngestionID: ingID, Signals: acceptedSignals}
+			if err := q.Enqueue(queue.IngestionJob{IngestionID: ingID, Signals: acceptedSignals}); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to enqueue ingestion job"})
+			}
 		}
 		resp := models.IngestResponse{
 			IngestionID:   ingID,

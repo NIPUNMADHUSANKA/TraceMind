@@ -126,6 +126,40 @@ func TestPostgresStore_SaveIncident_SetsDefaultTimes(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestPostgresStore_UpdateIncidentStatus_UpdatesOnlyStatus(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := &PostgresStore{db: db}
+
+	mock.ExpectExec("UPDATE incidents SET status = \\$2, updated_at = \\$3 WHERE id = \\$1").
+		WithArgs("inc-1", "In-Progress", nonZeroTimeMatcher{}).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err = ps.UpdateIncidentStatus("inc-1", "In-Progress")
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresStore_UpdateIncidentStatus_ValidatesInput(t *testing.T) {
+	t.Parallel()
+
+	db, _, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := &PostgresStore{db: db}
+
+	err = ps.UpdateIncidentStatus("", "In-Progress")
+	require.Error(t, err)
+
+	err = ps.UpdateIncidentStatus("inc-1", "")
+	require.Error(t, err)
+}
+
 func TestPostgresStore_GetSignal_InvalidJSON_ReturnsFalse(t *testing.T) {
 	t.Parallel()
 

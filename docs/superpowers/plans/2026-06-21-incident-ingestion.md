@@ -289,10 +289,293 @@ jobs:
 
 Commit.
 
+## Task 9: Durable Ingestion Queue (retries, visibility timeout, DLQ)
+
+**Files:**
+- Modify: `internal/queue/queue.go`
+- Create: `internal/queue/reliable_queue.go`
+- Test: `internal/queue/reliable_queue_test.go`
+- Modify: `internal/worker/worker.go`
+
+**Interfaces:**
+- Consumes: `models.Signal`
+- Produces: `type Delivery struct { Job IngestionJob; Receipt string; Attempt int }`
+- Produces: `func (q *ReliableQueue) Enqueue(job IngestionJob) error`
+- Produces: `func (q *ReliableQueue) Dequeue(ctx context.Context) (Delivery, error)`
+- Produces: `func (q *ReliableQueue) Ack(receipt string) error`
+- Produces: `func (q *ReliableQueue) Nack(receipt string, reason string) error`
+- Produces: `func (q *ReliableQueue) Stats() QueueStats`
+
+- [ ] Step 1: Write failing queue tests for visibility timeout and DLQ threshold
+
+```go
+func TestReliableQueue_RequeuesAfterVisibilityTimeout(t *testing.T) {
+  q := NewReliableQueue(QueueConfig{MaxAttempts: 3, VisibilityTimeout: 50 * time.Millisecond})
+  require.NoError(t, q.Enqueue(IngestionJob{IngestionID: "ing-1"}))
+
+  d1, err := q.Dequeue(context.Background())
+  require.NoError(t, err)
+  require.Equal(t, 1, d1.Attempt)
+
+  require.Eventually(t, func() bool {
+    d2, err := q.Dequeue(context.Background())
+    return err == nil && d2.Job.IngestionID == "ing-1" && d2.Attempt == 2
+  }, time.Second, 10*time.Millisecond)
+}
+```
+
+- [ ] Step 2: Run queue test to confirm it fails
+
+Run: `go test ./internal/queue -run TestReliableQueue_RequeuesAfterVisibilityTimeout -v`
+Expected: FAIL because reliable queue and visibility timeout behavior are not implemented yet.
+
+- [ ] Step 3: Implement reliable queue and move expired in-flight deliveries back to ready queue
+
+```go
+func (q *ReliableQueue) sweepExpired(now time.Time) {
+  for receipt, inFlight := range q.inFlight {
+    if now.After(inFlight.VisibleAt) {
+      delete(q.inFlight, receipt)
+      if inFlight.Attempt >= q.cfg.MaxAttempts {
+        q.dlq = append(q.dlq, inFlight.job)
+        q.failed++
+        continue
+      }
+      q.ready = append(q.ready, queuedItem{job: inFlight.job, attempt: inFlight.Attempt + 1})
+    }
+  }
+}
+```
+
+- [ ] Step 4: Update worker to `Ack` successful deliveries and `Nack` failures
+
+```go
+delivery, err := rq.Dequeue(ctx)
+if err != nil { return }
+if err := process(delivery.Job); err != nil {
+  _ = rq.Nack(delivery.Receipt, err.Error())
+  return
+}
+_ = rq.Ack(delivery.Receipt)
+```
+
+- [ ] Step 5: Run queue and worker tests
+
+Run: `go test ./internal/queue ./internal/worker -v`
+Expected: PASS with coverage for retries, visibility timeout, and DLQ handoff behavior.
+
+- [ ] Step 6: Commit
+
+```bash
+git add internal/queue internal/worker
+git commit -m "feat(queue): add retries visibility timeout and dead-letter handling"
+```
+
+## Task 10: Archive Tiers and Retention Profiles
+
+**Files:**
+- Create: `internal/store/archive_tiers.go`
+- Create: `internal/store/archive_tiers_test.go`
+- Modify: `internal/store/retention.go`
+- Modify: `internal/store/postgres.go`
+
+**Interfaces:**
+- Produces: `type ArchiveTier string`
+- Produces: `const (ArchiveTierHot ArchiveTier = "hot"; ArchiveTierWarm ArchiveTier = "warm"; ArchiveTierCold ArchiveTier = "cold")`
+- Produces: `func ResolveArchiveTier(age time.Duration) ArchiveTier`
+- Produces: `func RetentionProfileForEnvironment(env string) RetentionProfile`
+
+- [ ] Step 1: Write failing tests for tier resolution and environment profiles
+
+```go
+func TestResolveArchiveTier(t *testing.T) {
+  require.Equal(t, ArchiveTierHot, ResolveArchiveTier(6*time.Hour))
+  require.Equal(t, ArchiveTierWarm, ResolveArchiveTier(20*24*time.Hour))
+  require.Equal(t, ArchiveTierCold, ResolveArchiveTier(120*24*time.Hour))
+}
+
+func TestRetentionProfileForEnvironment(t *testing.T) {
+  p := RetentionProfileForEnvironment("prod")
+  require.Equal(t, 30*24*time.Hour, p.RawWindow)
+  require.Equal(t, 365*24*time.Hour, p.NormalizedWindow)
+  require.Equal(t, 0.01, p.LowSeveritySampling)
+}
+```
+
+- [ ] Step 2: Run tests to verify failure
+
+Run: `go test ./internal/store -run "TestResolveArchiveTier|TestRetentionProfileForEnvironment" -v`
+Expected: FAIL until tier/profile code is implemented.
+
+- [ ] Step 3: Implement archive tier and retention profile resolver
+
+```go
+func RetentionProfileForEnvironment(env string) RetentionProfile {
+  switch env {
+  case "prod":
+    return RetentionProfile{RawWindow: 30 * 24 * time.Hour, NormalizedWindow: 365 * 24 * time.Hour, LowSeveritySampling: 0.01}
+  case "staging":
+    return RetentionProfile{RawWindow: 14 * 24 * time.Hour, NormalizedWindow: 90 * 24 * time.Hour, LowSeveritySampling: 0.01}
+  default:
+    return RetentionProfile{RawWindow: 7 * 24 * time.Hour, NormalizedWindow: 30 * 24 * time.Hour, LowSeveritySampling: 0.01}
+  }
+}
+```
+
+- [ ] Step 4: Wire retention enforcer startup to selected environment profile
+
+```go
+profile := RetentionProfileForEnvironment(os.Getenv("APP_ENV"))
+store.StartRetentionEnforcer(dbConn, "signals", profile.RawWindow, stopDel)
+store.StartRetentionEnforcer(dbConn, "incidents", profile.NormalizedWindow, stopDel)
+```
+
+- [ ] Step 5: Run store and server package tests
+
+Run: `go test ./internal/store ./cmd/server -v`
+Expected: PASS and no regression on existing retention tests.
+
+- [ ] Step 6: Commit
+
+```bash
+git add internal/store cmd/server/main.go
+git commit -m "feat(store): add archive tiers and env-specific retention profiles"
+```
+
+## Task 11: Analysis Engine (rule-based + hybrid output)
+
+**Files:**
+- Create: `internal/analysis/engine.go`
+- Create: `internal/analysis/rules.go`
+- Create: `internal/analysis/engine_test.go`
+- Modify: `internal/models/models.go`
+- Modify: `internal/worker/worker.go`
+
+**Interfaces:**
+- Produces: `type Analyzer interface { Analyze(models.Incident, []models.Signal) models.AnalysisResult }`
+- Produces: `func NewRuleEngine() Analyzer`
+- Produces: `func (e *RuleEngine) Analyze(inc models.Incident, evidence []models.Signal) models.AnalysisResult`
+- Produces: `func AnalyzeIncidentAndAttach(inc *models.Incident, evidence []models.Signal, analyzer Analyzer)`
+
+- [ ] Step 1: Write failing analysis tests for deployment outage, DB failure, and queue backlog patterns
+
+```go
+func TestRuleEngine_DeploymentOutagePattern(t *testing.T) {
+  engine := NewRuleEngine()
+  inc := models.Incident{ID: "inc-1"}
+  evidence := []models.Signal{
+    {EventType: "deployment", Severity: 5, Message: "deploy failed"},
+    {EventType: "health", Severity: 5, Message: "service unhealthy"},
+  }
+  out := engine.Analyze(inc, evidence)
+  require.Equal(t, "rule-based", out.Source)
+  require.NotEmpty(t, out.Hypotheses)
+  require.NotEmpty(t, out.Recommendations)
+}
+```
+
+- [ ] Step 2: Run analysis tests to verify failure first
+
+Run: `go test ./internal/analysis -run TestRuleEngine_DeploymentOutagePattern -v`
+Expected: FAIL because analysis engine package and rule logic do not exist yet.
+
+- [ ] Step 3: Implement deterministic rule engine and hybrid source marker when multiple signals contribute
+
+```go
+func (e *RuleEngine) Analyze(inc models.Incident, evidence []models.Signal) models.AnalysisResult {
+  hypotheses, confidence, actions := evaluateRules(evidence)
+  source := "rule-based"
+  if len(evidence) > 3 {
+    source = "hybrid"
+  }
+  return models.AnalysisResult{
+    IncidentID:      inc.ID,
+    Hypotheses:      hypotheses,
+    Confidence:      confidence,
+    Recommendations: actions,
+    Timestamp:       time.Now().UTC(),
+    Source:          source,
+  }
+}
+```
+
+- [ ] Step 4: Attach analysis output to incidents from worker flow after correlation
+
+```go
+result := analyzer.Analyze(incident, group.Signals)
+incident.AnalysisSummary = strings.Join(result.Hypotheses, "; ")
+incident.Recommendations = result.Recommendations
+store.SaveIncident(incident)
+```
+
+- [ ] Step 5: Run analysis and worker tests
+
+Run: `go test ./internal/analysis ./internal/worker -v`
+Expected: PASS with analysis fields populated on newly created/updated incidents.
+
+- [ ] Step 6: Commit
+
+```bash
+git add internal/analysis internal/models/models.go internal/worker/worker.go
+git commit -m "feat(analysis): add hybrid rule engine and incident analysis attachment"
+```
+
+## Task 12: Ingestion health metrics for queue retries and dead-letter counts
+
+**Files:**
+- Modify: `internal/api/health.go`
+- Create: `internal/api/health_queue_metrics_test.go`
+- Modify: `cmd/server/main.go`
+
+**Interfaces:**
+- Consumes: `queue.QueueStats`
+- Produces: `/api/health/ingestion` response fields: `queueDepth`, `retryCount`, `deadLetterCount`, `lastProcessedTimestamp`
+
+- [ ] Step 1: Write failing API health test for retry and DLQ fields
+
+```go
+func TestHealthHandler_IncludesRetryAndDLQCounts(t *testing.T) {
+  // arrange mocked queue stats and call GET /api/health/ingestion
+  // assert payload contains retryCount and deadLetterCount
+}
+```
+
+- [ ] Step 2: Run the targeted test and confirm failure
+
+Run: `go test ./internal/api -run TestHealthHandler_IncludesRetryAndDLQCounts -v`
+Expected: FAIL because response does not yet expose retry/dlq metrics.
+
+- [ ] Step 3: Extend health handler and server wiring to inject queue stats provider
+
+```go
+return c.JSON(fiber.Map{
+  "ingestion": fiber.Map{
+    "queueDepth": qStats.Depth,
+    "retryCount": qStats.RetryCount,
+    "deadLetterCount": qStats.DeadLetterCount,
+    "lastProcessedTimestamp": qStats.LastProcessedTimestamp,
+  },
+  "incidents": incCount,
+})
+```
+
+- [ ] Step 4: Run API and queue tests
+
+Run: `go test ./internal/api ./internal/queue -v`
+Expected: PASS with health payload including retry and dead-letter metrics.
+
+- [ ] Step 5: Commit
+
+```bash
+git add internal/api/health.go internal/api/health_queue_metrics_test.go cmd/server/main.go
+git commit -m "feat(api): expose ingestion retry and dead-letter health metrics"
+```
+
 ---
 
 ## Self-Review checklist
 - [ ] Spec coverage: ensure ingestion API, queue, worker pipeline, incident entity, health API, retention policies are mapped to tasks above.
+- [ ] Spec coverage extension: durable queue retries/visibility timeout/DLQ, archive tiers, and analysis engine outputs are each covered by at least one dedicated task.
 - [ ] No placeholders: every Task contains code snippets or exact commands.
 - [ ] Type consistency: verify `models` types are used consistently across `internal/*` packages.
 
