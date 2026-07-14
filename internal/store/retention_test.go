@@ -70,8 +70,23 @@ func TestRedactPayloadByAllowList(t *testing.T) {
 func TestConfigurePayloadAllowList_AppliesDuringSaveSignal(t *testing.T) {
 	t.Parallel()
 
-	ConfigurePayloadAllowList([]string{"requestId"})
-	t.Cleanup(func() { ConfigurePayloadAllowList(nil) })
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := PostgresStore{db: db}
+	rows := sqlmock.NewRows([]string{"allow_list", "disallow_list"}).
+		AddRow([]byte(`["requestId"]`), []byte(`[]`))
+	mock.ExpectQuery("SELECT allow_list, disallow_list FROM payload_filter_configs WHERE environment = \\$1").
+		WithArgs("staging").
+		WillReturnRows(rows)
+
+	ConfigurePayloadAllowList(ps, "staging")
+	t.Cleanup(func() {
+		payloadAllowListMu.Lock()
+		payloadAllowList = nil
+		payloadAllowListMu.Unlock()
+	})
 
 	s := NewStore()
 	s.SaveSignal(models.Signal{
@@ -90,6 +105,7 @@ func TestConfigurePayloadAllowList_AppliesDuringSaveSignal(t *testing.T) {
 	require.Equal(t, "r2", sig.Payload["requestId"])
 	_, hasToken := sig.Payload["token"]
 	require.False(t, hasToken)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestSaveSignal_SanitizesMessage(t *testing.T) {
