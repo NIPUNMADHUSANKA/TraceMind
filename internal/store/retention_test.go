@@ -75,9 +75,9 @@ func TestConfigurePayloadAllowList_AppliesDuringSaveSignal(t *testing.T) {
 	defer db.Close()
 
 	ps := PostgresStore{db: db}
-	rows := sqlmock.NewRows([]string{"allow_list", "disallow_list"}).
-		AddRow([]byte(`["requestId"]`), []byte(`[]`))
-	mock.ExpectQuery("SELECT allow_list, disallow_list FROM payload_filter_configs WHERE environment = \\$1").
+	rows := sqlmock.NewRows([]string{"allow_payload"}).
+		AddRow("requestId")
+	mock.ExpectQuery("SELECT allow_payload FROM payload_filter_configs WHERE environment = \\$1 ORDER BY allow_payload ASC").
 		WithArgs("staging").
 		WillReturnRows(rows)
 

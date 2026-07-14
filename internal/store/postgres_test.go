@@ -160,7 +160,7 @@ func TestPostgresStore_UpdateIncidentStatus_ValidatesInput(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestPostgresStore_SavePayloadFilterConfig_Upserts(t *testing.T) {
+func TestPostgresStore_SavePayloadFilterConfig_InsertsEnvironmentRows(t *testing.T) {
 	t.Parallel()
 
 	db, mock, err := sqlmock.New()
@@ -169,11 +169,16 @@ func TestPostgresStore_SavePayloadFilterConfig_Upserts(t *testing.T) {
 
 	ps := &PostgresStore{db: db}
 
+	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO payload_filter_configs").
-		WithArgs("staging", sqlmock.AnyArg(), sqlmock.AnyArg(), nonZeroTimeMatcher{}).
+		WithArgs("staging", "requestId", nonZeroTimeMatcher{}).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO payload_filter_configs").
+		WithArgs("staging", "traceId", nonZeroTimeMatcher{}).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 
-	err = ps.SavePayloadFilterConfig("staging", []string{"requestId", "traceId"}, []string{"password", "token"})
+	err = ps.SavePayloadFilterConfig("staging", []string{"requestId", "traceId"})
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -186,11 +191,11 @@ func TestPostgresStore_SavePayloadFilterConfig_ValidatesInput(t *testing.T) {
 	defer db.Close()
 
 	ps := &PostgresStore{db: db}
-	err = ps.SavePayloadFilterConfig("", nil, nil)
+	err = ps.SavePayloadFilterConfig("", nil)
 	require.Error(t, err)
 }
 
-func TestPostgresStore_GetPayloadFilterConfig_LoadsLists(t *testing.T) {
+func TestPostgresStore_GetPayloadFilterConfig_LoadsAllowList(t *testing.T) {
 	t.Parallel()
 
 	db, mock, err := sqlmock.New()
@@ -198,17 +203,17 @@ func TestPostgresStore_GetPayloadFilterConfig_LoadsLists(t *testing.T) {
 	defer db.Close()
 
 	ps := &PostgresStore{db: db}
-	rows := sqlmock.NewRows([]string{"allow_list", "disallow_list"}).
-		AddRow([]byte(`["requestId","traceId"]`), []byte(`["password","token"]`))
+	rows := sqlmock.NewRows([]string{"allow_payload"}).
+		AddRow("requestId").
+		AddRow("traceId")
 
-	mock.ExpectQuery("SELECT allow_list, disallow_list FROM payload_filter_configs WHERE environment = \\$1").
+	mock.ExpectQuery("SELECT allow_payload FROM payload_filter_configs WHERE environment = \\$1 ORDER BY allow_payload ASC").
 		WithArgs("staging").
 		WillReturnRows(rows)
 
-	allowList, disallowList, err := ps.GetPayloadFilterConfig("staging")
+	allowList, err := ps.GetPayloadFilterConfig("staging")
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{"requestId", "traceId"}, allowList)
-	require.ElementsMatch(t, []string{"password", "token"}, disallowList)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

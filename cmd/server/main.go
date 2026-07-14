@@ -54,6 +54,7 @@ func main() {
 	apiGroup.Get("/incidents", api.IncidentsHandler(dbConn))
 	apiGroup.Get("/incidents/:id", api.IncidentGetHandler(dbConn))
 	apiGroup.Get("/health/ingestion", api.HealthHandler(q, dbConn))
+	apiGroup.Put("/payload-filters/:environment", api.PayloadFilter(dbConn))
 
 	go func() {
 		c := make(chan os.Signal, 1)
