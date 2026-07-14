@@ -79,10 +79,10 @@ CREATE TABLE IF NOT EXISTS incidents (
 
 	_, err = db.Exec(`
 CREATE TABLE IF NOT EXISTS payload_filter_configs (
-    environment text PRIMARY KEY,
-    allow_list jsonb NOT NULL,
-    disallow_list jsonb NOT NULL,
-    updated_at timestamptz NOT NULL
+	environment text NOT NULL,
+	allow_payload text NOT NULL,
+	updated_at timestamptz NOT NULL,
+	PRIMARY KEY (environment, allow_payload)
 );
 `)
 	if err != nil {
@@ -316,61 +316,62 @@ func (p *PostgresStore) UpdateIncidentStatus(id string, status string) error {
 	return nil
 }
 
-func (p *PostgresStore) SavePayloadFilterConfig(environment string, allowList []string, disallowList []string) error {
+func (p *PostgresStore) SavePayloadFilterConfig(environment string, allowList []string) error {
 	if environment == "" {
 		return errors.New("store: environment is required")
 	}
 
-	allowJSON, err := json.Marshal(allowList)
-	if err != nil {
-		return err
-	}
-	disallowJSON, err := json.Marshal(disallowList)
+	tx, err := p.db.Begin()
 	if err != nil {
 		return err
 	}
 
-	_, err = p.db.Exec(`INSERT INTO payload_filter_configs (environment, allow_list, disallow_list, updated_at)
-VALUES ($1,$2,$3,$4)
-ON CONFLICT (environment) DO UPDATE SET
-    allow_list = EXCLUDED.allow_list,
-    disallow_list = EXCLUDED.disallow_list,
-    updated_at = EXCLUDED.updated_at`,
-		environment,
-		allowJSON,
-		disallowJSON,
-		time.Now().UTC(),
-	)
-	return err
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	now := time.Now().UTC()
+	for _, payloadKey := range allowList {
+		if payloadKey == "" {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO payload_filter_configs (environment, allow_payload, updated_at)
+VALUES ($1,$2,$3)`, environment, payloadKey, now); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
-func (p *PostgresStore) GetPayloadFilterConfig(environment string) ([]string, []string, error) {
+func (p *PostgresStore) GetPayloadFilterConfig(environment string) ([]string, error) {
 	if environment == "" {
-		return nil, nil, errors.New("store: environment is required")
+		return nil, errors.New("store: environment is required")
 	}
 
-	row := p.db.QueryRow(`SELECT allow_list, disallow_list FROM payload_filter_configs WHERE environment = $1`, environment)
-	var allowJSON []byte
-	var disallowJSON []byte
-	if err := row.Scan(&allowJSON, &disallowJSON); err != nil {
-		return nil, nil, err
+	rows, err := p.db.Query(`SELECT allow_payload FROM payload_filter_configs WHERE environment = $1 ORDER BY allow_payload ASC`, environment)
+	if err != nil {
+		return nil, err
 	}
+	defer rows.Close()
 
-	allowList := make([]string, 0)
-	if len(allowJSON) > 0 {
-		if err := json.Unmarshal(allowJSON, &allowList); err != nil {
-			return nil, nil, err
+	allowList := make([]string, 0, 8)
+	for rows.Next() {
+		var payloadKey string
+		if err := rows.Scan(&payloadKey); err != nil {
+			return nil, err
 		}
+		allowList = append(allowList, payloadKey)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
-	disallowList := make([]string, 0)
-	if len(disallowJSON) > 0 {
-		if err := json.Unmarshal(disallowJSON, &disallowList); err != nil {
-			return nil, nil, err
-		}
-	}
-
-	return allowList, disallowList, nil
+	return allowList, nil
 }
 
 func (p *PostgresStore) ListIncidents() []models.Incident {
