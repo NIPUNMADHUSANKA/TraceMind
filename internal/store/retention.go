@@ -11,8 +11,8 @@ var (
 	payloadAllowList   map[string]bool
 )
 
-// ConfigurePayloadAllowList sets the payload keys that are retained when saving signals.
-// If no keys are configured, payload values are stored as-is.
+// ConfigurePayloadAllowList loads the payload allow-list for the given environment from the store.
+// If no keys are configured (or no config exists), payload values are stored as-is.
 func ConfigurePayloadAllowList(s PostgresStore, env string) {
 	allow, _, err := s.GetPayloadFilterConfig(env)
 	payloadAllowListMu.Lock()
