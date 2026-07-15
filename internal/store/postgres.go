@@ -374,6 +374,56 @@ func (p *PostgresStore) GetPayloadFilterConfig(environment string) ([]string, er
 	return allowList, nil
 }
 
+func deletePayloadFilterConfigRow(tx *sql.Tx, environment string, payloadKey string) (int, error) {
+	res, err := tx.Exec(`DELETE FROM payload_filter_configs WHERE environment = $1 AND allow_payload = $2`, environment, payloadKey)
+	if err != nil {
+		return 0, err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	return int(rows), nil
+}
+
+func (p *PostgresStore) DeletePayloadFilterConfig(environment string, payloads []string) (int, error) {
+	if environment == "" {
+		return 0, errors.New("store: environment is required")
+	}
+	if len(payloads) == 0 {
+		return 0, errors.New("store: payloads must contain at least one key")
+	}
+
+	tx, err := p.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	deleted := 0
+	for _, payloadKey := range payloads {
+		if payloadKey == "" {
+			continue
+		}
+		rows, err := deletePayloadFilterConfigRow(tx, environment, payloadKey)
+		if err != nil {
+			return 0, err
+		}
+		deleted += rows
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	return deleted, nil
+}
+
 func (p *PostgresStore) ListIncidents() []models.Incident {
 	rows, err := p.db.Query(`SELECT id, title, status, severity, impacted_services, environments, signal_ids, analysis_summary, recommendations, created_at, updated_at FROM incidents`)
 	if err != nil {
