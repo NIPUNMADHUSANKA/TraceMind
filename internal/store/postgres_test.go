@@ -217,6 +217,46 @@ func TestPostgresStore_GetPayloadFilterConfig_LoadsAllowList(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestPostgresStore_DeletePayloadFilterConfig_DeletesRows(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := &PostgresStore{db: db}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM payload_filter_configs WHERE environment = \\$1 AND allow_payload = \\$2").
+		WithArgs("staging", "requestId").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM payload_filter_configs WHERE environment = \\$1 AND allow_payload = \\$2").
+		WithArgs("staging", "traceId").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	deleted, err := ps.DeletePayloadFilterConfig("staging", []string{"requestId", "traceId"})
+	require.NoError(t, err)
+	require.Equal(t, 2, deleted)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresStore_DeletePayloadFilterConfig_ValidatesInput(t *testing.T) {
+	t.Parallel()
+
+	db, _, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := &PostgresStore{db: db}
+
+	_, err = ps.DeletePayloadFilterConfig("", []string{"requestId"})
+	require.Error(t, err)
+
+	_, err = ps.DeletePayloadFilterConfig("staging", nil)
+	require.Error(t, err)
+}
+
 func TestPostgresStore_GetSignal_InvalidJSON_ReturnsFalse(t *testing.T) {
 	t.Parallel()
 
