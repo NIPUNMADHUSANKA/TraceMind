@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"database/sql/driver"
 	"testing"
 	"time"
@@ -290,10 +291,8 @@ func TestPostgresStore_DeleteSignalsOlderThan_DeletesInBatches(t *testing.T) {
 	cutoff := time.Now().UTC().Add(-24 * time.Hour)
 
 	mock.ExpectExec("DELETE FROM signals").
-		WithArgs(cutoff, signalDeleteBatchSize).
 		WillReturnResult(sqlmock.NewResult(0, signalDeleteBatchSize))
 	mock.ExpectExec("DELETE FROM signals").
-		WithArgs(cutoff, signalDeleteBatchSize).
 		WillReturnResult(sqlmock.NewResult(0, 250))
 
 	deleted := ps.DeleteSignalsOlderThan(cutoff)
@@ -312,10 +311,8 @@ func TestPostgresStore_DeleteIncidentsOlderThan_DeletesInBatches(t *testing.T) {
 	cutoff := time.Now().UTC().Add(-24 * time.Hour)
 
 	mock.ExpectExec("DELETE FROM incidents").
-		WithArgs(cutoff, signalDeleteBatchSize).
 		WillReturnResult(sqlmock.NewResult(0, signalDeleteBatchSize))
 	mock.ExpectExec("DELETE FROM incidents").
-		WithArgs(cutoff, signalDeleteBatchSize).
 		WillReturnResult(sqlmock.NewResult(0, 250))
 
 	deleted := ps.DeleteIncidentsOlderThan(cutoff)
@@ -409,6 +406,171 @@ func TestPostgresStore_GetIncident_DecodesRow(t *testing.T) {
 	require.ElementsMatch(t, []string{"do x"}, inc.Recommendations)
 	require.Equal(t, now, inc.CreatedAt)
 	require.Equal(t, now.Add(2*time.Minute), inc.UpdatedAt)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresStore_CreateAnalysisRule_GeneratesID(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := &PostgresStore{db: db}
+
+	mock.ExpectExec("INSERT INTO analysis_rules").
+		WithArgs(
+			nonEmptyStringMatcher{},
+			"DB Failure",
+			"",
+			0.0,
+			100,
+			false,
+			"ALL",
+			"database issue",
+			sqlmock.AnyArg(),
+			1,
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	id, err := ps.CreateAnalysisRule(models.AnalysisRule{
+		Name:               "DB Failure",
+		HypothesisTemplate: "database issue",
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, id)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresStore_UpdateAnalysisRule_NotFound(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := &PostgresStore{db: db}
+
+	mock.ExpectExec("UPDATE analysis_rules").
+		WithArgs(
+			"rule-1",
+			"Updated",
+			"",
+			0.0,
+			100,
+			true,
+			"ALL",
+			"template",
+			sqlmock.AnyArg(),
+			1,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err = ps.UpdateAnalysisRule("rule-1", models.AnalysisRule{
+		Name:               "Updated",
+		Enabled:            true,
+		Priority:           100,
+		MatchType:          "ALL",
+		HypothesisTemplate: "template",
+		Version:            1,
+	})
+
+	require.ErrorIs(t, err, sql.ErrNoRows)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresStore_DeleteAnalysisRule_DeletesRow(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := &PostgresStore{db: db}
+
+	mock.ExpectExec("DELETE FROM analysis_rules WHERE id = \\$1").
+		WithArgs("rule-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err = ps.DeleteAnalysisRule("rule-1")
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresStore_CreateUpdateDeleteAnalysisRulePattern(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := &PostgresStore{db: db}
+	severityMin := 4
+
+	mock.ExpectExec("INSERT INTO analysis_rules_patterns").
+		WithArgs(
+			nonEmptyStringMatcher{},
+			"rule-1",
+			"database",
+			"checkout",
+			"prod",
+			&severityMin,
+			"substring",
+			"connection",
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	patternID, err := ps.CreateAnalysisRulePattern(models.AnalysisRulePattern{
+		RuleID:            "rule-1",
+		EventType:         "database",
+		Source:            "checkout",
+		Environment:       "prod",
+		SeverityMin:       &severityMin,
+		MessageMatchType:  "substring",
+		MessagePattern:    "connection",
+		PayloadConditions: []models.PayloadCondition{},
+		VariableMappings:  map[string]string{},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, patternID)
+
+	mock.ExpectExec("UPDATE analysis_rules_patterns").
+		WithArgs(
+			patternID,
+			"rule-1",
+			"database",
+			"checkout",
+			"staging",
+			&severityMin,
+			"substring",
+			"timeout",
+			sqlmock.AnyArg(),
+			sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err = ps.UpdateAnalysisRulePattern(patternID, models.AnalysisRulePattern{
+		RuleID:            "rule-1",
+		EventType:         "database",
+		Source:            "checkout",
+		Environment:       "staging",
+		SeverityMin:       &severityMin,
+		MessageMatchType:  "substring",
+		MessagePattern:    "timeout",
+		PayloadConditions: []models.PayloadCondition{},
+		VariableMappings:  map[string]string{},
+	})
+	require.NoError(t, err)
+
+	mock.ExpectExec("DELETE FROM analysis_rules_patterns WHERE id = \\$1").
+		WithArgs(patternID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err = ps.DeleteAnalysisRulePattern(patternID)
+	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

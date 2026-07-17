@@ -56,6 +56,12 @@ func main() {
 	apiGroup.Get("/health/ingestion", api.HealthHandler(q, dbConn))
 	apiGroup.Put("/payload-filters/:environment", api.PayloadFilter(dbConn))
 	apiGroup.Delete("/payload-filters/:environment", api.DeletePayloadFilter(dbConn))
+	apiGroup.Post("/analysis-rules", api.CreateAnalysisRuleHandler(dbConn))
+	apiGroup.Put("/analysis-rules/:id", api.UpdateAnalysisRuleHandler(dbConn))
+	apiGroup.Delete("/analysis-rules/:id", api.DeleteAnalysisRuleHandler(dbConn))
+	apiGroup.Post("/analysis-rule-patterns", api.CreateAnalysisRulePatternHandler(dbConn))
+	apiGroup.Put("/analysis-rule-patterns/:id", api.UpdateAnalysisRulePatternHandler(dbConn))
+	apiGroup.Delete("/analysis-rule-patterns/:id", api.DeleteAnalysisRulePatternHandler(dbConn))
 
 	go func() {
 		c := make(chan os.Signal, 1)

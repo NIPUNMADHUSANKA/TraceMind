@@ -2,6 +2,21 @@ package models
 
 import "time"
 
+type RuleMatchType string
+
+const (
+	MatchTypeSingle      RuleMatchType = "single"
+	MatchTypeCorrelation RuleMatchType = "correlation"
+)
+
+type MessageMatchType string
+
+const (
+	MessageMatchExact    MessageMatchType = "exact"
+	MessageMatchContains MessageMatchType = "contains"
+	MessageMatchRegex    MessageMatchType = "regex"
+)
+
 // Signal represents an incoming event/signal
 type Signal struct {
 	ID        string                 `json:"id,omitempty"`
@@ -53,3 +68,47 @@ type AnalysisResult struct {
 	Timestamp       time.Time `json:"analysisTimestamp"`
 	Source          string    `json:"source"`
 }
+
+type PayloadCondition struct {
+	Field    string      `json:"field"`
+	Operator string      `json:"operator"`
+	Value    interface{} `json:"value"`
+}
+
+// AnalysisRule stores a deterministic analysis rule configuration.
+type AnalysisRule struct {
+	ID                 string        `json:"id"`
+	Name               string        `json:"name"`
+	Description        string        `json:"description,omitempty"`
+	Confidence         float64       `json:"confidence,omitempty"`
+	Priority           int           `json:"priority"`
+	Enabled            bool          `json:"enabled"`
+	MatchType          RuleMatchType `json:"matchType"`
+	HypothesisTemplate string        `json:"hypothesisTemplate"`
+	Recommendations    []string      `json:"recommendations,omitempty"`
+	Version            int           `json:"version"`
+	CreatedAt          time.Time     `json:"createdAt"`
+	UpdatedAt          time.Time     `json:"updatedAt"`
+}
+
+// AnalysisRulePattern stores match patterns belonging to an analysis rule.
+type AnalysisRulePattern struct {
+	ID                string             `json:"id"`
+	RuleID            string             `json:"ruleId"`
+	EventType         string             `json:"eventType,omitempty"` //database, queue, deployment, health, authentication
+	Source            string             `json:"source,omitempty"`    //where the signal came from.
+	Environment       string             `json:"environment,omitempty"`
+	SeverityMin       *int               `json:"severityMin,omitempty"` //Only match signals whose severity is at least this value.
+	MessageMatchType  MessageMatchType   `json:"messageMatchType,omitempty"`
+	MessagePattern    string             `json:"messagePattern,omitempty"`
+	PayloadConditions []PayloadCondition `json:"payloadConditions,omitempty"`
+	VariableMappings  map[string]string  `json:"variableMappings,omitempty"`
+	CreatedAt         time.Time          `json:"createdAt"`
+	UpdatedAt         time.Time          `json:"updatedAt"`
+}
+
+/*
+The pointer lets you distinguish between:
+"No minimum severity specified"
+"Minimum severity is 0"
+*/
