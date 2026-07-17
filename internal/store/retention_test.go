@@ -36,7 +36,6 @@ func TestStartRetentionEnforcer_DeletesOnTicker(t *testing.T) {
 
 	ps := PostgresStore{db: db}
 	mock.ExpectExec("DELETE FROM signals").
-		WithArgs(sqlmock.AnyArg(), signalDeleteBatchSize).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	stop := make(chan struct{})

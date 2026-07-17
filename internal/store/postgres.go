@@ -4,12 +4,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"strconv"
 	"time"
 	"tracemind/internal/models"
 	"tracemind/internal/util"
 
-	_ "github.com/lib/pq"
+	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 type PostgresStore struct {
@@ -83,6 +86,83 @@ CREATE TABLE IF NOT EXISTS payload_filter_configs (
 	allow_payload text NOT NULL,
 	updated_at timestamptz NOT NULL,
 	PRIMARY KEY (environment, allow_payload)
+);
+`)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	_, err = db.Exec(`
+CREATE TABLE IF NOT EXISTS analysis_rules (
+	id text PRIMARY KEY,
+	name varchar(200) NOT NULL,
+	description text,
+	confidence float(20),
+	priority int NOT NULL DEFAULT 100,
+	enabled boolean NOT NULL DEFAULT TRUE,
+	match_type varchar(10) NOT NULL DEFAULT 'ALL',
+	hypothesis_template text NOT NULL,
+	recommendations jsonb NOT NULL DEFAULT '[]',
+	version int NOT NULL DEFAULT 1,
+	created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`)
+
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	_, err = db.Exec(`
+CREATE TABLE IF NOT EXISTS analysis_rules_patterns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	rule_id text NOT NULL,
+    event_type VARCHAR(50),
+    source VARCHAR(255),
+    environment VARCHAR(100),
+    severity_min INTEGER,
+    message_match_type VARCHAR(20),
+    message_pattern TEXT,
+    payload_conditions JSONB NOT NULL DEFAULT '[]'::JSONB,
+    variable_mappings JSONB NOT NULL DEFAULT '{}'::JSONB,
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_signal_patterns_rule
+        FOREIGN KEY (rule_id)
+        REFERENCES analysis_rules(id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT chk_signal_patterns_severity
+        CHECK (
+            severity_min IS NULL
+            OR severity_min BETWEEN 0 AND 100
+        ),
+
+    CONSTRAINT chk_signal_patterns_message_match_type
+        CHECK (
+            message_match_type IS NULL
+            OR message_match_type IN (
+                'substring',
+                'regex',
+                'exact'
+            )
+        ),
+
+    CONSTRAINT chk_signal_patterns_message_config
+        CHECK (
+            (message_match_type IS NULL AND message_pattern IS NULL)
+            OR
+            (message_match_type IS NOT NULL AND message_pattern IS NOT NULL)
+        ),
+
+    CONSTRAINT chk_signal_patterns_payload_conditions_array
+        CHECK (jsonb_typeof(payload_conditions) = 'array'),
+
+    CONSTRAINT chk_signal_patterns_variable_mappings_object
+        CHECK (jsonb_typeof(variable_mappings) = 'object')
 );
 `)
 	if err != nil {
@@ -184,13 +264,16 @@ func (p *PostgresStore) DeleteSignalsOlderThan(cutoff time.Time) int {
 }
 
 func (p *PostgresStore) deleteSignalsOlderThanBatch(cutoff time.Time, batchSize int) int {
-	res, err := p.db.Exec(`DELETE FROM signals
+	cutoffLiteral := pq.QuoteLiteral(cutoff.UTC().Format(time.RFC3339Nano))
+	query := fmt.Sprintf(`DELETE FROM signals
 WHERE ctid IN (
 	SELECT ctid FROM signals
-	WHERE timestamp < $1
+	WHERE timestamp < %s::timestamptz
 	ORDER BY timestamp ASC
-	LIMIT $2
-)`, cutoff, batchSize)
+	LIMIT %s
+)`, cutoffLiteral, strconv.Itoa(batchSize))
+
+	res, err := p.db.Exec(query)
 	if err != nil {
 		log.Printf("store: delete old signals failed: %v", err)
 		return 0
@@ -215,13 +298,16 @@ func (p *PostgresStore) DeleteIncidentsOlderThan(cutoff time.Time) int {
 }
 
 func (p *PostgresStore) DeleteIncidentsOlderThanBatch(cutoff time.Time, batchSize int) int {
-	res, err := p.db.Exec(`DELETE FROM incidents
+	cutoffLiteral := pq.QuoteLiteral(cutoff.UTC().Format(time.RFC3339Nano))
+	query := fmt.Sprintf(`DELETE FROM incidents
 	WHERE ctid IN (
 		SELECT ctid FROM incidents
-		WHERE COALESCE(updated_at, created_at) < $1
+		WHERE COALESCE(updated_at, created_at) < %s::timestamptz
 		ORDER BY COALESCE(updated_at, created_at) ASC
-		LIMIT $2
-	)`, cutoff, batchSize)
+		LIMIT %s
+	)`, cutoffLiteral, strconv.Itoa(batchSize))
+
+	res, err := p.db.Exec(query)
 	if err != nil {
 		log.Printf("store: delete old incidents failed: %v", err)
 		return 0
@@ -314,6 +400,228 @@ func (p *PostgresStore) UpdateIncidentStatus(id string, status string) error {
 	}
 
 	return nil
+}
+
+func (p *PostgresStore) CreateAnalysisRule(rule models.AnalysisRule) (string, error) {
+	if rule.ID == "" {
+		rule.ID = util.GenID()
+	}
+	if rule.Priority == 0 {
+		rule.Priority = 100
+	}
+	if rule.MatchType == "" {
+		rule.MatchType = "ALL"
+	}
+	if rule.Version == 0 {
+		rule.Version = 1
+	}
+
+	recommendationsJSON, err := json.Marshal(rule.Recommendations)
+	if err != nil {
+		return "", err
+	}
+
+	_, err = p.db.Exec(`INSERT INTO analysis_rules (id, name, description, confidence, priority, enabled, match_type, hypothesis_template, recommendations, version, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+		rule.ID,
+		rule.Name,
+		rule.Description,
+		rule.Confidence,
+		rule.Priority,
+		rule.Enabled,
+		rule.MatchType,
+		rule.HypothesisTemplate,
+		recommendationsJSON,
+		rule.Version,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	return rule.ID, nil
+}
+
+func (p *PostgresStore) UpdateAnalysisRule(id string, rule models.AnalysisRule) error {
+	if id == "" {
+		return errors.New("store: analysis rule id is required")
+	}
+
+	recommendationsJSON, err := json.Marshal(rule.Recommendations)
+	if err != nil {
+		return err
+	}
+
+	res, err := p.db.Exec(`UPDATE analysis_rules
+SET name = $2,
+	description = $3,
+	confidence = $4,
+	priority = $5,
+	enabled = $6,
+	match_type = $7,
+	hypothesis_template = $8,
+	recommendations = $9,
+	version = $10,
+	updated_at = CURRENT_TIMESTAMP
+WHERE id = $1`,
+		id,
+		rule.Name,
+		rule.Description,
+		rule.Confidence,
+		rule.Priority,
+		rule.Enabled,
+		rule.MatchType,
+		rule.HypothesisTemplate,
+		recommendationsJSON,
+		rule.Version,
+	)
+	if err != nil {
+		return err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+func (p *PostgresStore) DeleteAnalysisRule(id string) error {
+	if id == "" {
+		return errors.New("store: analysis rule id is required")
+	}
+
+	res, err := p.db.Exec(`DELETE FROM analysis_rules WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+func (p *PostgresStore) CreateAnalysisRulePattern(pattern models.AnalysisRulePattern) (string, error) {
+	if pattern.ID == "" {
+		pattern.ID = uuid.NewString()
+	}
+
+	payloadConditionsJSON, err := json.Marshal(pattern.PayloadConditions)
+	if err != nil {
+		return "", err
+	}
+	variableMappingsJSON, err := json.Marshal(pattern.VariableMappings)
+	if err != nil {
+		return "", err
+	}
+
+	_, err = p.db.Exec(`INSERT INTO analysis_rules_patterns (id, rule_id, event_type, source, environment, severity_min, message_match_type, message_pattern, payload_conditions, variable_mappings, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+		pattern.ID,
+		pattern.RuleID,
+		nullableString(pattern.EventType),
+		nullableString(pattern.Source),
+		nullableString(pattern.Environment),
+		pattern.SeverityMin,
+		nullableString(pattern.MessageMatchType),
+		nullableString(pattern.MessagePattern),
+		payloadConditionsJSON,
+		variableMappingsJSON,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	return pattern.ID, nil
+}
+
+func (p *PostgresStore) UpdateAnalysisRulePattern(id string, pattern models.AnalysisRulePattern) error {
+	if id == "" {
+		return errors.New("store: analysis rule pattern id is required")
+	}
+
+	payloadConditionsJSON, err := json.Marshal(pattern.PayloadConditions)
+	if err != nil {
+		return err
+	}
+	variableMappingsJSON, err := json.Marshal(pattern.VariableMappings)
+	if err != nil {
+		return err
+	}
+
+	res, err := p.db.Exec(`UPDATE analysis_rules_patterns
+SET rule_id = $2,
+	event_type = $3,
+	source = $4,
+	environment = $5,
+	severity_min = $6,
+	message_match_type = $7,
+	message_pattern = $8,
+	payload_conditions = $9,
+	variable_mappings = $10,
+	updated_at = CURRENT_TIMESTAMP
+WHERE id = $1`,
+		id,
+		pattern.RuleID,
+		nullableString(pattern.EventType),
+		nullableString(pattern.Source),
+		nullableString(pattern.Environment),
+		pattern.SeverityMin,
+		nullableString(pattern.MessageMatchType),
+		nullableString(pattern.MessagePattern),
+		payloadConditionsJSON,
+		variableMappingsJSON,
+	)
+	if err != nil {
+		return err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+func (p *PostgresStore) DeleteAnalysisRulePattern(id string) error {
+	if id == "" {
+		return errors.New("store: analysis rule pattern id is required")
+	}
+
+	res, err := p.db.Exec(`DELETE FROM analysis_rules_patterns WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	return nil
+}
+
+func nullableString(value interface{}) interface{} {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func (p *PostgresStore) SavePayloadFilterConfig(environment string, allowList []string) error {
