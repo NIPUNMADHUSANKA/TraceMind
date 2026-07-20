@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 	"tracemind/internal/models"
 	"tracemind/internal/util"
@@ -508,6 +509,139 @@ func (p *PostgresStore) DeleteAnalysisRule(id string) error {
 	}
 
 	return nil
+}
+
+// GetEnabledAnalysisRulesByPattern returns enabled rules whose patterns match the
+// provided event types, source, and environment. Returned rules include only
+// the matching patterns.
+func (p *PostgresStore) GetEnabledAnalysisRulesByPattern(eventTypes []string, source string, environment string) ([]models.AnalysisRule, error) {
+	source = strings.TrimSpace(source)
+	environment = strings.TrimSpace(environment)
+
+	rows, err := p.db.Query(`SELECT
+	r.id,
+	r.confidence,
+	r.priority,
+	r.match_type,
+	r.hypothesis_template,
+	r.recommendations,
+	p.id,
+	p.rule_id,
+	p.severity_min,
+	p.message_match_type,
+	p.message_pattern,
+	p.payload_conditions,
+	p.variable_mappings
+FROM analysis_rules r
+JOIN analysis_rules_patterns p ON p.rule_id = r.id
+WHERE r.enabled = TRUE
+	AND p.event_type = ANY($1::text[])
+	AND p.source = $2
+	AND p.environment = $3
+ORDER BY r.priority DESC, r.created_at DESC, p.created_at ASC`, pq.Array(eventTypes), source, environment)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	rulesByID := map[string]*models.AnalysisRule{}
+	orderedIDs := make([]string, 0, 8)
+
+	for rows.Next() {
+		var (
+			ruleID             string
+			ruleConfidence     float64
+			rulePriority       int
+			ruleMatchType      string
+			ruleHypothesis     string
+			ruleRecJSON        []byte
+			patternID          string
+			patternRuleID      string
+			patternSeverityMin int
+			patternMatchType   string
+			patternMessage     string
+			patternCondJSON    []byte
+			patternVarJSON     []byte
+		)
+
+		if err := rows.Scan(
+			&ruleID,
+			&ruleConfidence,
+			&rulePriority,
+			&ruleMatchType,
+			&ruleHypothesis,
+			&ruleRecJSON,
+			&patternID,
+			&patternRuleID,
+			&patternSeverityMin,
+			&patternMatchType,
+			&patternMessage,
+			&patternCondJSON,
+			&patternVarJSON,
+		); err != nil {
+			return nil, err
+		}
+
+		rule, ok := rulesByID[ruleID]
+		if !ok {
+			recommendations := []string{}
+			if len(ruleRecJSON) > 0 {
+				if err := json.Unmarshal(ruleRecJSON, &recommendations); err != nil {
+					return nil, err
+				}
+			}
+
+			rule = &models.AnalysisRule{
+				ID:                 ruleID,
+				Confidence:         ruleConfidence,
+				Priority:           rulePriority,
+				MatchType:          models.RuleMatchType(ruleMatchType),
+				HypothesisTemplate: ruleHypothesis,
+				Recommendations:    recommendations,
+				Patterns:           []models.AnalysisRulePattern{},
+			}
+			rulesByID[ruleID] = rule
+			orderedIDs = append(orderedIDs, ruleID)
+		}
+
+		pattern := models.AnalysisRulePattern{
+			ID:               patternID,
+			RuleID:           patternRuleID,
+			SeverityMin:      &patternSeverityMin,
+			MessageMatchType: models.MessageMatchType(patternMatchType),
+			MessagePattern:   patternMessage,
+		}
+
+		if len(patternCondJSON) > 0 {
+			if err := json.Unmarshal(patternCondJSON, &pattern.PayloadConditions); err != nil {
+				return nil, err
+			}
+		}
+		if pattern.PayloadConditions == nil {
+			pattern.PayloadConditions = []models.PayloadCondition{}
+		}
+		if len(patternVarJSON) > 0 {
+			if err := json.Unmarshal(patternVarJSON, &pattern.VariableMappings); err != nil {
+				return nil, err
+			}
+		}
+		if pattern.VariableMappings == nil {
+			pattern.VariableMappings = map[string]string{}
+		}
+
+		rule.Patterns = append(rule.Patterns, pattern)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	rules := make([]models.AnalysisRule, 0, len(orderedIDs))
+	for _, id := range orderedIDs {
+		rules = append(rules, *rulesByID[id])
+	}
+
+	return rules, nil
 }
 
 func (p *PostgresStore) CreateAnalysisRulePattern(pattern models.AnalysisRulePattern) (string, error) {

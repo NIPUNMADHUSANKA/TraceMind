@@ -77,18 +77,19 @@ type PayloadCondition struct {
 
 // AnalysisRule stores a deterministic analysis rule configuration.
 type AnalysisRule struct {
-	ID                 string        `json:"id"`
-	Name               string        `json:"name"`
-	Description        string        `json:"description,omitempty"`
-	Confidence         float64       `json:"confidence,omitempty"`
-	Priority           int           `json:"priority"`
-	Enabled            bool          `json:"enabled"`
-	MatchType          RuleMatchType `json:"matchType"`
-	HypothesisTemplate string        `json:"hypothesisTemplate"`
-	Recommendations    []string      `json:"recommendations,omitempty"`
-	Version            int           `json:"version"`
-	CreatedAt          time.Time     `json:"createdAt"`
-	UpdatedAt          time.Time     `json:"updatedAt"`
+	ID                 string                `json:"id"`
+	Name               string                `json:"name"`
+	Description        string                `json:"description,omitempty"`
+	Confidence         float64               `json:"confidence,omitempty"`
+	Priority           int                   `json:"priority"`
+	Enabled            bool                  `json:"enabled"`
+	MatchType          RuleMatchType         `json:"matchType"`
+	HypothesisTemplate string                `json:"hypothesisTemplate"`
+	Recommendations    []string              `json:"recommendations,omitempty"`
+	Patterns           []AnalysisRulePattern `json:"patterns,omitempty"`
+	Version            int                   `json:"version"`
+	CreatedAt          time.Time             `json:"createdAt"`
+	UpdatedAt          time.Time             `json:"updatedAt"`
 }
 
 // AnalysisRulePattern stores match patterns belonging to an analysis rule.

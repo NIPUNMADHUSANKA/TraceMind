@@ -180,7 +180,7 @@ func attachAnalysis(incident *models.Incident, evidence []models.Signal, st stor
 	}
 	incident.Status = "in-progress"
 	_ = st.UpdateIncidentStatus(incident.ID, incident.Status)
-	result := incidentAnalyzer.Analyze(*incident, evidence)
+	result := incidentAnalyzer.Analyze(*incident, evidence, st)
 	incident.AnalysisSummary = strings.Join(result.Hypotheses, "; ")
 	incident.Recommendations = append(incident.Recommendations, result.Recommendations...)
 	incident.Status = "resolved"
