@@ -574,6 +574,87 @@ func TestPostgresStore_CreateUpdateDeleteAnalysisRulePattern(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestPostgresStore_GetEnabledAnalysisRulesByPattern_ReturnsMatchedRulesWithPatterns(t *testing.T) {
+	t.Parallel()
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ps := &PostgresStore{db: db}
+
+	rows := sqlmock.NewRows([]string{
+		"id",
+		"confidence",
+		"priority",
+		"match_type",
+		"hypothesis_template",
+		"recommendations",
+		"id",
+		"rule_id",
+		"severity_min",
+		"message_match_type",
+		"message_pattern",
+		"payload_conditions",
+		"variable_mappings",
+	}).
+		AddRow(
+			"rule-1",
+			0.85,
+			100,
+			"single",
+			"db down",
+			[]byte(`["inspect pool limits"]`),
+			"pat-1",
+			"rule-1",
+			4,
+			"contains",
+			"timeout",
+			[]byte(`[{"field":"db.host","operator":"exists","value":true}]`),
+			[]byte(`{"service":"checkout"}`),
+		).
+		AddRow(
+			"rule-1",
+			0.85,
+			100,
+			"single",
+			"db down",
+			[]byte(`["inspect pool limits"]`),
+			"pat-2",
+			"rule-1",
+			0,
+			"",
+			"",
+			[]byte(`[]`),
+			[]byte(`{}`),
+		)
+
+	mock.ExpectQuery("FROM analysis_rules r").
+		WithArgs(sqlmock.AnyArg(), "checkout", "prod").
+		WillReturnRows(rows)
+
+	rules, err := ps.GetEnabledAnalysisRulesByPattern([]string{"database"}, "checkout", "prod")
+	require.NoError(t, err)
+	require.Len(t, rules, 1)
+	require.Equal(t, "rule-1", rules[0].ID)
+	require.Len(t, rules[0].Patterns, 2)
+	require.Equal(t, "pat-1", rules[0].Patterns[0].ID)
+	require.NotNil(t, rules[0].Patterns[0].SeverityMin)
+	require.Equal(t, 4, *rules[0].Patterns[0].SeverityMin)
+	require.Equal(t, models.MessageMatchContains, rules[0].Patterns[0].MessageMatchType)
+	require.Equal(t, "timeout", rules[0].Patterns[0].MessagePattern)
+	require.Len(t, rules[0].Patterns[0].PayloadConditions, 1)
+	require.Equal(t, "db.host", rules[0].Patterns[0].PayloadConditions[0].Field)
+	require.Equal(t, "checkout", rules[0].Patterns[0].VariableMappings["service"])
+	require.Equal(t, "pat-2", rules[0].Patterns[1].ID)
+	require.NotNil(t, rules[0].Patterns[1].SeverityMin)
+	require.Equal(t, 0, *rules[0].Patterns[1].SeverityMin)
+	require.Empty(t, rules[0].Patterns[1].MessagePattern)
+	require.Equal(t, 0, len(rules[0].Patterns[1].PayloadConditions))
+	require.Equal(t, 0, len(rules[0].Patterns[1].VariableMappings))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestPostgresStore_Close(t *testing.T) {
 	t.Parallel()
 
