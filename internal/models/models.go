@@ -113,3 +113,8 @@ The pointer lets you distinguish between:
 "No minimum severity specified"
 "Minimum severity is 0"
 */
+
+type AiSuggestion struct {
+	HypothesisTemplate string   `json:"hypothesisTemplate"`
+	Recommendations    []string `json:"recommendations,omitempty"`
+}

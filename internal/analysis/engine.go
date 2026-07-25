@@ -1,11 +1,13 @@
 package analysis
 
 import (
+	"context"
 	"regexp"
 	"strings"
 	"time"
 	"tracemind/internal/models"
 	"tracemind/internal/store"
+	"tracemind/internal/util"
 )
 
 // Analyzer produces hypothesis and recommendation output for an incident.
@@ -69,12 +71,23 @@ func (e *ruleEngine) Analyze(incident models.Incident, evidence []models.Signal,
 
 	analysisSource := "rule-based"
 	if len(hypotheses) == 0 {
-		hypotheses = append(hypotheses, "insufficient deterministic evidence")
-		recommendations = append(recommendations,
-			"Collect additional traces and infrastructure metrics for this window.",
-			"Escalate to hybrid analysis with service owner context.",
-		)
 		analysisSource = "hybrid"
+		ctx, cancle := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancle()
+
+		aiRes, err := util.GenerateAI(ctx, incident, evidence)
+
+		if err != nil {
+			hypotheses = append(hypotheses, "insufficient deterministic evidence")
+			recommendations = append(recommendations,
+				"Collect additional traces and infrastructure metrics for this window.",
+				"Escalate to hybrid analysis with service owner context.",
+				err.Error(),
+			)
+		} else {
+			hypotheses = append(hypotheses, aiRes.HypothesisTemplate)
+			recommendations = append(recommendations, aiRes.Recommendations...)
+		}
 	}
 
 	return models.AnalysisResult{
