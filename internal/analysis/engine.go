@@ -272,12 +272,12 @@ func dedupeStrings(values []string) []string {
 	}
 
 	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
+	seen := make(map[string]bool, len(values))
 	for _, value := range values {
 		if _, ok := seen[value]; ok {
 			continue
 		}
-		seen[value] = struct{}{}
+		seen[value] = true
 		result = append(result, value)
 	}
 

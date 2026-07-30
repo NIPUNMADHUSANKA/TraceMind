@@ -10,7 +10,7 @@ import (
 	"tracemind/internal/queue"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
 )
 
 func setupApp(t *testing.T) *fiber.App {
@@ -31,8 +31,9 @@ func TestRootRoute(t *testing.T) {
 	app := setupApp(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NoError(t, err)
+	assert.Equal(t, http.MethodGet, resp.StatusCode)
+	defer resp.Body.Close()
 }
 
 func TestIngestEndpoint(t *testing.T) {
@@ -41,6 +42,7 @@ func TestIngestEndpoint(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/ingest", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	defer resp.Body.Close()
 }

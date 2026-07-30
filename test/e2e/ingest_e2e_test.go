@@ -15,19 +15,19 @@ import (
 	"tracemind/internal/worker"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestIngestCreatesIncidentAndListsViaAPI(t *testing.T) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		t.Skip("DATABASE_URL is required for e2e tests with PostgresStore")
+		t.Skip("DATABASE_URL is assertd for e2e tests with PostgresStore")
 	}
 
 	ps, err := store.NewPostgresStore(dsn)
-	require.NoError(t, err)
+	assert.NoError(t, err)
 	t.Cleanup(func() {
-		require.NoError(t, ps.Close())
+		assert.NoError(t, ps.Close())
 	})
 	st := *ps
 
@@ -47,16 +47,16 @@ func TestIngestCreatesIncidentAndListsViaAPI(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/ingest", strings.NewReader(ingestBody))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req)
-	require.NoError(t, err)
+	assert.NoError(t, err)
 	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var ingestResp models.IngestResponse
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&ingestResp))
-	require.Equal(t, 1, ingestResp.AcceptedCount)
-	require.NotEmpty(t, ingestResp.IngestionID)
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&ingestResp))
+	assert.Equal(t, 1, ingestResp.AcceptedCount)
+	assert.NotEmpty(t, ingestResp.IngestionID)
 
-	require.Eventually(t, func() bool {
+	assert.Eventually(t, func() bool {
 		incReq := httptest.NewRequest(http.MethodGet, "/api/incidents", nil)
 		incResp, testErr := app.Test(incReq)
 		if testErr != nil || incResp.StatusCode != http.StatusOK {

@@ -26,7 +26,9 @@ func main() {
 		log.Fatalf("Database connection issue: %s", err.Error())
 	}
 	log.Println("Database connection successful")
-	defer func() { _ = dbConnection.Close() }()
+	defer func() {
+		_ = dbConnection.Close()
+	}()
 	var dbConn store.PostgresStore = *dbConnection
 	q := queue.NewQueue()
 	stopCh := make(chan struct{})
@@ -54,7 +56,7 @@ func main() {
 	apiGroup.Get("/incidents", api.IncidentsHandler(dbConn))
 	apiGroup.Get("/incidents/:id", api.IncidentGetHandler(dbConn))
 	apiGroup.Get("/health/ingestion", api.HealthHandler(q, dbConn))
-	apiGroup.Put("/payload-filters/:environment", api.PayloadFilter(dbConn))
+	apiGroup.Post("/payload-filters/:environment", api.PayloadFilter(dbConn))
 	apiGroup.Delete("/payload-filters/:environment", api.DeletePayloadFilter(dbConn))
 	apiGroup.Post("/analysis-rules", api.CreateAnalysisRuleHandler(dbConn))
 	apiGroup.Put("/analysis-rules/:id", api.UpdateAnalysisRuleHandler(dbConn))

@@ -3,7 +3,6 @@ module tracemind
 go 1.25
 
 require (
-	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/gofiber/fiber/v2 v2.52.13
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1

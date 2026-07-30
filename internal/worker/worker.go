@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -105,6 +106,8 @@ func groupBySourceAndWindow(signals []models.Signal, window time.Duration) []sig
 		env := ""
 		if len(parts) == 2 {
 			env = parts[1]
+		} else {
+			env = os.Getenv("APP_ENV")
 		}
 
 		current := signalGroup{Source: source, Env: env, Signals: []models.Signal{list[0]}, Start: signalTime(list[0]), End: signalTime(list[0])}

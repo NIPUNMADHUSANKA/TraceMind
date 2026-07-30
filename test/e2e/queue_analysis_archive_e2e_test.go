@@ -15,19 +15,19 @@ import (
 	"tracemind/internal/worker"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestQueueAnalysisArchiveE2E(t *testing.T) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		t.Skip("DATABASE_URL is required for e2e tests with PostgresStore")
+		t.Skip("DATABASE_URL is assertd for e2e tests with PostgresStore")
 	}
 
 	ps, err := store.NewPostgresStore(dsn)
-	require.NoError(t, err)
+	assert.NoError(t, err)
 	t.Cleanup(func() {
-		require.NoError(t, ps.Close())
+		assert.NoError(t, ps.Close())
 	})
 	st := *ps
 
@@ -47,11 +47,11 @@ func TestQueueAnalysisArchiveE2E(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/ingest", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req)
-	require.NoError(t, err)
+	assert.NoError(t, err)
 	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	require.Eventually(t, func() bool {
+	assert.Eventually(t, func() bool {
 		incReq := httptest.NewRequest(http.MethodGet, "/api/incidents", nil)
 		incResp, incErr := app.Test(incReq)
 		if incErr != nil || incResp.StatusCode != http.StatusOK {
