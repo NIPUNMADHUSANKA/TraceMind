@@ -247,9 +247,21 @@ Returns queue and incident visibility metrics:
 
 ### Payload allow-list configuration
 
-Use these APIs to keep only selected payload keys at persistence time.
+Use these endpoints to control which payload keys are persisted for a given environment.
 
-Update allow-list:
+#### Update allow-list
+
+`POST /api/payload-filters/:environment`
+
+Request body:
+
+```json
+{
+  "payloads": ["requestId", "service", "region"]
+}
+```
+
+Example:
 
 ```bash
 curl -X POST http://localhost:8080/api/payload-filters/staging \
@@ -257,7 +269,19 @@ curl -X POST http://localhost:8080/api/payload-filters/staging \
   -d '{"payloads":["requestId","service","region"]}'
 ```
 
-Delete keys from allow-list:
+#### Delete keys from allow-list
+
+`DELETE /api/payload-filters/:environment`
+
+Request body:
+
+```json
+{
+  "payloads": ["region"]
+}
+```
+
+Example:
 
 ```bash
 curl -X DELETE http://localhost:8080/api/payload-filters/staging \
@@ -267,7 +291,39 @@ curl -X DELETE http://localhost:8080/api/payload-filters/staging \
 
 ### Analysis rule APIs
 
-Create rule:
+Use these endpoints to create and manage deterministic analysis rules and their matching patterns.
+
+#### Create rule
+
+`POST /api/analysis-rules`
+
+Use this endpoint to define a rule that can produce a hypothesis and recommendations when matching signals are found.
+
+Request body:
+
+```json
+{
+  "name": "Queue Backlog",
+  "description": "Detect queue delay patterns",
+  "confidence": 0.85,
+  "priority": 80,
+  "enabled": true,
+  "matchType": "single",
+  "hypothesisTemplate": "Queue backlog is increasing processing latency",
+  "recommendations": ["Scale consumers", "Inspect retry spikes"],
+  "version": 1
+}
+```
+
+Field notes:
+
+- `name` is required and should be a short human-readable rule name.
+- `hypothesisTemplate` is required and should describe the likely cause or conclusion when the rule matches.
+- `matchType` controls how patterns are evaluated. Use `single` for a rule that matches when any pattern matches, or `correlation` for a rule that requires multiple pattern(all pattern must match) conditions to align.
+- `confidence`, `priority`, `enabled`, and `version` are optional but should be set to meaningful values for production use.
+- `recommendations` should be an array of actionable follow-up steps.
+
+Example:
 
 ```bash
 curl -X POST http://localhost:8080/api/analysis-rules \
@@ -285,7 +341,42 @@ curl -X POST http://localhost:8080/api/analysis-rules \
   }'
 ```
 
-Create rule pattern:
+#### Create rule pattern
+
+`POST /api/analysis-rule-patterns`
+
+Use this endpoint to attach a matching pattern to an existing rule. The pattern tells the engine when a signal should trigger that rule.
+
+Request body:
+
+```json
+{
+  "ruleId": "<rule-id>",
+  "eventType": "queue",
+  "source": "worker-service",
+  "environment": "staging",
+  "severityMin": 3,
+  "messageMatchType": "regex",
+  "messagePattern": "backlog|timeout",
+  "payloadConditions": [],
+  "variableMappings": {
+    "service": "worker-service"
+  }
+}
+```
+
+Field notes:
+
+- `ruleId` is required and must reference an existing analysis rule ID created by the previous endpoint.
+- `eventType` should be a relevant signal type such as `log`, `deployment`, `database`, `queue`, or `health`.
+- `source` and `environment` should match the signal origin you want the pattern to target.
+- `severityMin` is optional, but if provided it should be an integer threshold for minimum signal severity.
+- `messageMatchType` is required when `messagePattern` is supplied, and it must be one of `exact`, `contains`, or `regex`.
+- `messagePattern` should contain the literal text or regex expression to match against the signal message.
+- `payloadConditions` is optional and can be used to match against payload fields using an object structure like `{ "field": "requestId", "operator": "eq", "value": "123" }`.
+- `variableMappings` is optional and can map names used by your rule logic to concrete values.
+
+Example:
 
 ```bash
 curl -X POST http://localhost:8080/api/analysis-rule-patterns \
@@ -303,11 +394,13 @@ curl -X POST http://localhost:8080/api/analysis-rule-patterns \
   }'
 ```
 
-Rule validation notes:
+Validation notes:
 
-- Rule `name` and `hypothesisTemplate` are required
-- Pattern `ruleId` is required
-- `messageMatchType` and `messagePattern` must be provided together
+- Rule `name` and `hypothesisTemplate` are required.
+- Pattern `ruleId` is required.
+- `messageMatchType` and `messagePattern` must be provided together.
+- `matchType` on rules should be either `single` or `correlation`.
+- `messageMatchType` on patterns should be either `exact`, `contains`, or `regex`.
 - Current API surface for rules is write-only CRUD-by-ID (`POST`, `PUT`, `DELETE`); list/get endpoints are not exposed.
 
 ## Processing model
@@ -341,12 +434,6 @@ Retention profile by `APP_ENV`:
 - `prod` / `production`: raw signals `30d`, normalized incidents `365d`
 - `staging` / `stage`: raw signals `14d`, normalized incidents `90d`
 - default (`dev` and others): raw signals `7d`, normalized incidents `30d`
-
-Archive tier mapping by signal age:
-
-- `hot`: `<= 7d`
-- `warm`: `<= 30d`
-- `cold`: `> 30d`
 
 ## Testing
 
