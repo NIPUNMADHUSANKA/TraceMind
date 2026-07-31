@@ -10,7 +10,7 @@ import (
 	"tracemind/internal/api"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
 )
 
 func setupPayloadFilterApp(t *testing.T) (*fiber.App, func() []string) {
@@ -20,12 +20,12 @@ func setupPayloadFilterApp(t *testing.T) (*fiber.App, func() []string) {
 	s, cleanup := newTestPostgresStore(t)
 	t.Cleanup(cleanup)
 
-	app.Put("/api/payload-filters/:environment", api.PayloadFilter(s))
+	app.Post("/api/payload-filters/:environment", api.PayloadFilter(s))
 	app.Delete("/api/payload-filters/:environment", api.DeletePayloadFilter(s))
 
 	readBack := func() []string {
 		allowList, err := s.GetPayloadFilterConfig("staging")
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		return allowList
 	}
 
@@ -37,16 +37,16 @@ func TestPayloadFilter_InvalidJSON(t *testing.T) {
 
 	app, _ := setupPayloadFilterApp(t)
 
-	req := httptest.NewRequest(http.MethodPut, "/api/payload-filters/staging", strings.NewReader("{"))
+	req := httptest.NewRequest(http.MethodPost, "/api/payload-filters/staging", strings.NewReader("{"))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	var body map[string]string
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	require.Equal(t, "request body must be valid JSON", body["error"])
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, "request body must be valid JSON", body["error"])
 }
 
 func TestPayloadFilter_RejectsEmptyPayloads(t *testing.T) {
@@ -54,16 +54,16 @@ func TestPayloadFilter_RejectsEmptyPayloads(t *testing.T) {
 
 	app, _ := setupPayloadFilterApp(t)
 
-	req := httptest.NewRequest(http.MethodPut, "/api/payload-filters/staging", strings.NewReader(`{"payloads":["", "   "]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/payload-filters/staging", strings.NewReader(`{"payloads":["", "   "]}`))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	var body map[string]string
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	require.Equal(t, "payloads must contain at least one key", body["error"])
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, "payloads must contain at least one key", body["error"])
 }
 
 func TestPayloadFilter_UpdatesAllowListAndReturnsMessage(t *testing.T) {
@@ -71,22 +71,22 @@ func TestPayloadFilter_UpdatesAllowListAndReturnsMessage(t *testing.T) {
 
 	app, readBack := setupPayloadFilterApp(t)
 
-	req := httptest.NewRequest(http.MethodPut, "/api/payload-filters/staging", strings.NewReader(`{"payloads":["requestId"," traceId ","requestId"]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/payload-filters/staging", strings.NewReader(`{"payloads":["requestId"," traceId ","requestId"]}`))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var body map[string]interface{}
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	require.Equal(t, "success", body["status"])
-	require.Equal(t, "payload allow-list updated", body["message"])
-	require.Equal(t, "staging", body["environment"])
-	require.Equal(t, float64(2), body["count"])
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, "success", body["status"])
+	assert.Equal(t, "payload allow-list updated", body["message"])
+	assert.Equal(t, "staging", body["environment"])
+	assert.Equal(t, float64(2), body["count"])
 
 	allowList := readBack()
-	require.ElementsMatch(t, []string{"requestId", "traceId"}, allowList)
+	assert.ElementsMatch(t, []string{"requestId", "traceId"}, allowList)
 }
 
 func TestDeletePayloadFilter_InvalidJSON(t *testing.T) {
@@ -98,12 +98,12 @@ func TestDeletePayloadFilter_InvalidJSON(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	var body map[string]string
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	require.Equal(t, "request body must be valid JSON", body["error"])
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, "request body must be valid JSON", body["error"])
 }
 
 func TestDeletePayloadFilter_RejectsEmptyPayloads(t *testing.T) {
@@ -115,12 +115,12 @@ func TestDeletePayloadFilter_RejectsEmptyPayloads(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := app.Test(req)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	var body map[string]string
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-	require.Equal(t, "payloads must contain at least one key", body["error"])
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, "payloads must contain at least one key", body["error"])
 }
 
 func TestDeletePayloadFilter_RemovesPayloadsAndReturnsMessage(t *testing.T) {
@@ -128,26 +128,26 @@ func TestDeletePayloadFilter_RemovesPayloadsAndReturnsMessage(t *testing.T) {
 
 	app, readBack := setupPayloadFilterApp(t)
 
-	seedReq := httptest.NewRequest(http.MethodPut, "/api/payload-filters/staging", strings.NewReader(`{"payloads":["requestId","traceId","sessionId"]}`))
+	seedReq := httptest.NewRequest(http.MethodPost, "/api/payload-filters/staging", strings.NewReader(`{"payloads":["requestId","traceId","sessionId"]}`))
 	seedReq.Header.Set("Content-Type", "application/json")
 	seedResp, err := app.Test(seedReq)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, seedResp.StatusCode)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, seedResp.StatusCode)
 
 	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/payload-filters/staging", strings.NewReader(`{"payloads":[" traceId ", "traceId", "sessionId"]}`))
 	deleteReq.Header.Set("Content-Type", "application/json")
 
 	deleteResp, err := app.Test(deleteReq)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, deleteResp.StatusCode)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, deleteResp.StatusCode)
 
 	var body map[string]interface{}
-	require.NoError(t, json.NewDecoder(deleteResp.Body).Decode(&body))
-	require.Equal(t, "success", body["status"])
-	require.Equal(t, "payload allow-list updated", body["message"])
-	require.Equal(t, "staging", body["environment"])
-	require.Equal(t, float64(2), body["count"])
+	assert.NoError(t, json.NewDecoder(deleteResp.Body).Decode(&body))
+	assert.Equal(t, "success", body["status"])
+	assert.Equal(t, "payload allow-list updated", body["message"])
+	assert.Equal(t, "staging", body["environment"])
+	assert.Equal(t, float64(2), body["count"])
 
 	allowList := readBack()
-	require.ElementsMatch(t, []string{"requestId"}, allowList)
+	assert.ElementsMatch(t, []string{"requestId"}, allowList)
 }

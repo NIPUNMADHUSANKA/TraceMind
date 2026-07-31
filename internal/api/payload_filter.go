@@ -49,9 +49,6 @@ func PayloadFilter(s store.PostgresStore) fiber.Handler {
 
 		payloadList, err := parsePayloadFilterRequest(c)
 		if err != nil {
-			if e, ok := err.(*fiber.Error); ok {
-				return c.Status(e.Code).JSON(fiber.Map{"error": e.Message})
-			}
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "request body must be valid JSON"})
 		}
 
@@ -80,9 +77,6 @@ func DeletePayloadFilter(s store.PostgresStore) fiber.Handler {
 
 		payloadList, err := parsePayloadFilterRequest(c)
 		if err != nil {
-			if e, ok := err.(*fiber.Error); ok {
-				return c.Status(e.Code).JSON(fiber.Map{"error": e.Message})
-			}
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "request body must be valid JSON"})
 		}
 

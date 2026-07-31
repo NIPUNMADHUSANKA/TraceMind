@@ -5,7 +5,7 @@ import (
 	"testing"
 	"tracemind/internal/store"
 
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
 )
 
 func newTestPostgresStore(t *testing.T) (store.PostgresStore, func()) {
@@ -17,10 +17,10 @@ func newTestPostgresStore(t *testing.T) (store.PostgresStore, func()) {
 	}
 
 	ps, err := store.NewPostgresStore(dsn)
-	require.NoError(t, err)
+	assert.NoError(t, err)
 
 	cleanup := func() {
-		require.NoError(t, ps.Close())
+		assert.NoError(t, ps.Close())
 	}
 	return *ps, cleanup
 }

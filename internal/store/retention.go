@@ -76,8 +76,8 @@ func StartRetentionEnforcer(s PostgresStore, t string, window time.Duration, sto
 
 func StartProfileRetentionEnforcers(s PostgresStore, env string, stop <-chan struct{}) {
 	profile := RetentionProfileForEnvironment(env)
-	StartRetentionEnforcer(s, "signals", profile.RawWindow, stop)
-	StartRetentionEnforcer(s, "incidents", profile.NormalizedWindow, stop)
+	go StartRetentionEnforcer(s, "signals", profile.RawWindow, stop)
+	go StartRetentionEnforcer(s, "incidents", profile.NormalizedWindow, stop)
 }
 
 func startRetentionEnforcerWithInterval(s PostgresStore, t string, window time.Duration, interval time.Duration, stop <-chan struct{}) {
