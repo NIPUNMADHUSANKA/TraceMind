@@ -35,6 +35,65 @@ internal/queue/             # Reliable queue (ack/nack, retries, visibility time
 test/e2e/                   # End-to-end test coverage
 ```
 
+## Architecture
+
+TraceMind has a short synchronous ingest path and a longer asynchronous analysis path. The API validates and stores accepted signals immediately, then hands work to the queue. A background worker later correlates signals into incidents, runs the analysis engine, and updates the incident record in Postgres.
+
+```mermaid
+flowchart LR
+  Client["Clients / Producers"]
+
+  subgraph Runtime["TraceMind Service"]
+    direction LR
+
+    subgraph API["Fiber HTTP API"]
+      direction TB
+      IngestAPI["Ingest API\nPOST /api/ingest"]
+      ReadAPI["Read APIs\nGET /api/incidents\nGET /api/incidents/:id\nGET /api/health/ingestion"]
+      AdminAPI["Admin APIs\npayload filters\nanalysis rules\nrule patterns"]
+    end
+
+    Queue["Reliable Queue\nack/nack, retries, visibility timeout"]
+    Worker["Background Worker\ncorrelate by source + env\nwithin 1 minute window"]
+    Engine["Analysis Engine\nrule-based matching\nAI fallback"]
+    Retention["Retention Enforcers\nperiodic cleanup"]
+  end
+
+  subgraph Postgres["PostgreSQL"]
+    direction TB
+    Signals[("signals")]
+    Incidents[("incidents")]
+    Rules[("analysis_rules")]
+    Patterns[("analysis_rules_patterns")]
+    PayloadFilters[("payload_filter_configs")]
+  end
+
+  Client --> IngestAPI
+  Client --> ReadAPI
+  Client --> AdminAPI
+
+  IngestAPI -->|1. validate, sanitize, persist| Signals
+  IngestAPI -->|2. enqueue accepted batch| Queue
+  Queue -->|3. dequeue job| Worker
+  Signals -->|4. signal evidence| Worker
+  Worker -->|5. create or update incident| Incidents
+  Worker -->|6. invoke analysis| Engine
+  Engine -->|load enabled rules| Rules
+  Engine -->|evaluate patterns| Patterns
+  Engine -->|7. write summary + recommendations| Incidents
+
+  ReadAPI -->|query incidents + queue stats| Incidents
+  AdminAPI -->|manage allow-list| PayloadFilters
+  AdminAPI -->|manage rules| Rules
+  AdminAPI -->|manage patterns| Patterns
+  PayloadFilters -. startup load .-> IngestAPI
+
+  Retention -->|delete expired raw signals| Signals
+  Retention -->|delete expired incidents| Incidents
+```
+
+Reading the diagram left to right: steps 1-2 are the synchronous request path, and steps 3-7 happen after the API response returns. The read and admin endpoints stay off the main processing lane so the ingest-to-analysis flow remains easy to scan.
+
 ## Prerequisites
 
 - Go 1.25+
