@@ -490,7 +490,7 @@ LIMIT 1`,
 	if err == nil {
 		return existingID, false, nil
 	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return "", false, err
 	}
 
@@ -757,7 +757,7 @@ LIMIT 1`,
 	if err == nil {
 		return existingID, false, nil
 	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return "", false, err
 	}
 
