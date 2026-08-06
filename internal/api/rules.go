@@ -5,6 +5,7 @@ import (
 	"strings"
 	"tracemind/internal/models"
 	"tracemind/internal/store"
+	"tracemind/internal/util"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -42,12 +43,17 @@ func CreateAnalysisRuleHandler(s store.PostgresStore) fiber.Handler {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		id, err := s.CreateAnalysisRule(rule)
+		id, created, err := s.CreateAnalysisRule(rule)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create analysis rule"})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		return c.Status(fiber.StatusCreated).JSON(fiber.Map{"status": "success", "id": id})
+		statusCode := fiber.StatusCreated
+		if !created {
+			statusCode = fiber.StatusOK
+		}
+
+		return c.Status(statusCode).JSON(fiber.Map{"status": "success", "id": id, "created": created})
 	}
 }
 
@@ -68,7 +74,7 @@ func UpdateAnalysisRuleHandler(s store.PostgresStore) fiber.Handler {
 			if err == sql.ErrNoRows {
 				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "analysis rule not found"})
 			}
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update analysis rule"})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "success", "id": id})
@@ -87,7 +93,7 @@ func DeleteAnalysisRuleHandler(s store.PostgresStore) fiber.Handler {
 			if err == sql.ErrNoRows {
 				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "analysis rule not found"})
 			}
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete analysis rule"})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "success", "id": id})
@@ -101,12 +107,17 @@ func CreateAnalysisRulePatternHandler(s store.PostgresStore) fiber.Handler {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		id, err := s.CreateAnalysisRulePattern(pattern)
+		id, created, err := s.CreateAnalysisRulePattern(pattern)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create analysis rule pattern"})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		return c.Status(fiber.StatusCreated).JSON(fiber.Map{"status": "success", "id": id})
+		statusCode := fiber.StatusCreated
+		if !created {
+			statusCode = fiber.StatusOK
+		}
+
+		return c.Status(statusCode).JSON(fiber.Map{"status": "success", "id": id, "created": created})
 	}
 }
 
@@ -127,7 +138,7 @@ func UpdateAnalysisRulePatternHandler(s store.PostgresStore) fiber.Handler {
 			if err == sql.ErrNoRows {
 				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "analysis rule pattern not found"})
 			}
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update analysis rule pattern"})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "success", "id": id})
@@ -146,7 +157,7 @@ func DeleteAnalysisRulePatternHandler(s store.PostgresStore) fiber.Handler {
 			if err == sql.ErrNoRows {
 				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "analysis rule pattern not found"})
 			}
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete analysis rule pattern"})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "success", "id": id})
@@ -156,7 +167,7 @@ func DeleteAnalysisRulePatternHandler(s store.PostgresStore) fiber.Handler {
 func parseAnalysisRuleRequest(c *fiber.Ctx) (models.AnalysisRule, error) {
 	var req analysisRuleRequest
 	if err := c.BodyParser(&req); err != nil {
-		return models.AnalysisRule{}, fiber.NewError(fiber.StatusBadRequest, "request body must be valid JSON")
+		return models.AnalysisRule{}, fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 	if strings.TrimSpace(req.Name) == "" {
 		return models.AnalysisRule{}, fiber.NewError(fiber.StatusBadRequest, "name is required")
@@ -165,30 +176,45 @@ func parseAnalysisRuleRequest(c *fiber.Ctx) (models.AnalysisRule, error) {
 		return models.AnalysisRule{}, fiber.NewError(fiber.StatusBadRequest, "hypothesisTemplate is required")
 	}
 
-	priority := 100
+	var priority int
 	if req.Priority != nil {
-		priority = *req.Priority
+		if *req.Priority >= 0 && *req.Priority <= 100 {
+			priority = *req.Priority
+		} else {
+			return models.AnalysisRule{}, fiber.NewError(fiber.StatusBadRequest, "The priority value must be between 0 and 100.")
+		}
 	}
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
 	matchType := models.MatchTypeSingle
-	if strings.TrimSpace(string(req.MatchType)) == string(models.MatchTypeSingle) {
+	if strings.ToLower(strings.TrimSpace(string(req.MatchType))) == string(models.MatchTypeSingle) {
 		matchType = models.MatchTypeSingle
-	} else if strings.TrimSpace(string(req.MatchType)) == string(models.MatchTypeCorrelation) {
+	} else if strings.ToLower(strings.TrimSpace(string(req.MatchType))) == string(models.MatchTypeCorrelation) {
 		matchType = models.MatchTypeCorrelation
+	} else {
+		return models.AnalysisRule{}, fiber.NewError(fiber.StatusBadRequest, "The matchType value must be either SINGLE or CORRELATION.")
 	}
-	version := 1
+	var version int
 	if req.Version != nil {
-		version = *req.Version
+		if *req.Version > 0 {
+			version = *req.Version
+		} else {
+			return models.AnalysisRule{}, fiber.NewError(fiber.StatusBadRequest, "The version cannot be negative")
+		}
+	}
+
+	confidence := req.Confidence
+	if confidence < 0 || confidence > 1 {
+		return models.AnalysisRule{}, fiber.NewError(fiber.StatusBadRequest, "The confidence value must be between 0 and 1")
 	}
 
 	return models.AnalysisRule{
 		ID:                 strings.TrimSpace(req.ID),
 		Name:               strings.TrimSpace(req.Name),
 		Description:        strings.TrimSpace(req.Description),
-		Confidence:         req.Confidence,
+		Confidence:         confidence,
 		Priority:           priority,
 		Enabled:            enabled,
 		MatchType:          matchType,
@@ -201,7 +227,10 @@ func parseAnalysisRuleRequest(c *fiber.Ctx) (models.AnalysisRule, error) {
 func parseAnalysisRulePatternRequest(c *fiber.Ctx) (models.AnalysisRulePattern, error) {
 	var req analysisRulePatternRequest
 	if err := c.BodyParser(&req); err != nil {
-		return models.AnalysisRulePattern{}, fiber.NewError(fiber.StatusBadRequest, "request body must be valid JSON")
+		if strings.Contains(strings.ToLower(err.Error()), "unknown field") {
+			return models.AnalysisRulePattern{}, fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		return models.AnalysisRulePattern{}, fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 	if strings.TrimSpace(req.RuleID) == "" {
 		return models.AnalysisRulePattern{}, fiber.NewError(fiber.StatusBadRequest, "ruleId is required")
@@ -216,22 +245,60 @@ func parseAnalysisRulePatternRequest(c *fiber.Ctx) (models.AnalysisRulePattern, 
 		req.VariableMappings = map[string]string{}
 	}
 
-	MessageMatchType := models.MessageMatchContains
-	if strings.TrimSpace(string(req.MessageMatchType)) == string(models.MessageMatchExact) {
+	eventType := strings.TrimSpace(req.EventType)
+	if eventType == "" {
+		return models.AnalysisRulePattern{}, fiber.NewError(fiber.StatusBadRequest, "The EventType value is required")
+	}
+
+	source := strings.TrimSpace(req.Source)
+	if source == "" {
+		return models.AnalysisRulePattern{}, fiber.NewError(fiber.StatusBadRequest, "The source value is required")
+	}
+
+	environment := strings.TrimSpace(req.Environment)
+	if environment == "" {
+		return models.AnalysisRulePattern{}, fiber.NewError(fiber.StatusBadRequest, "The Environment value is required")
+	}
+
+	environment, err := util.FormatEnvironment(environment)
+	if err != nil {
+		return models.AnalysisRulePattern{}, fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+
+	if req.SeverityMin == nil {
+		return models.AnalysisRulePattern{}, fiber.NewError(fiber.StatusBadRequest, "The SeverityMin value is required")
+	}
+
+	severity := *req.SeverityMin
+	if severity < 0 || severity > 100 {
+		return models.AnalysisRulePattern{}, fiber.NewError(fiber.StatusBadRequest, "The SeverityMin value must be between 0 and 100")
+	}
+
+	var MessageMatchType models.MessageMatchType
+	if strings.ToLower(strings.TrimSpace(string(req.MessageMatchType))) == string(models.MessageMatchExact) {
 		MessageMatchType = models.MessageMatchExact
-	} else if strings.TrimSpace(string(req.MessageMatchType)) == string(models.MessageMatchRegex) {
+	} else if strings.ToLower(strings.TrimSpace(string(req.MessageMatchType))) == string(models.MessageMatchRegex) {
 		MessageMatchType = models.MessageMatchRegex
+	} else if strings.ToLower(strings.TrimSpace(string(req.MessageMatchType))) == string(models.MessageMatchContains) {
+		MessageMatchType = models.MessageMatchContains
+	} else {
+		return models.AnalysisRulePattern{}, fiber.NewError(fiber.StatusBadRequest, "The MessageMatchType value must be either EXACT, CONTAINS, or REGEX")
+	}
+
+	messagePattern := strings.TrimSpace(req.MessagePattern)
+	if messagePattern == "" {
+		return models.AnalysisRulePattern{}, fiber.NewError(fiber.StatusBadRequest, "The MessagePattern value is required")
 	}
 
 	return models.AnalysisRulePattern{
 		ID:                strings.TrimSpace(req.ID),
 		RuleID:            strings.TrimSpace(req.RuleID),
-		EventType:         strings.TrimSpace(req.EventType),
-		Source:            strings.TrimSpace(req.Source),
-		Environment:       strings.TrimSpace(req.Environment),
+		EventType:         eventType,
+		Source:            source,
+		Environment:       environment,
 		SeverityMin:       req.SeverityMin,
 		MessageMatchType:  MessageMatchType,
-		MessagePattern:    strings.TrimSpace(req.MessagePattern),
+		MessagePattern:    messagePattern,
 		PayloadConditions: req.PayloadConditions,
 		VariableMappings:  req.VariableMappings,
 	}, nil

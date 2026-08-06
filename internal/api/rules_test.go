@@ -102,6 +102,40 @@ func TestAnalysisRuleCRUDFlow(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, notFoundResp.StatusCode)
 }
 
+func TestAnalysisRuleCreateIsIdempotentForDuplicatePayload(t *testing.T) {
+	t.Parallel()
+
+	app := setupRulesApp(t)
+
+	body := `{
+		"name":"Queue Backlog",
+		"description":"detects queue delays",
+		"confidence":0.91,
+		"priority":80,
+		"enabled":true,
+		"matchType":"single",
+		"hypothesisTemplate":"queue backlog is hurting processing latency",
+		"recommendations":["scale consumers"],
+		"version":2
+	}`
+
+	firstResp, firstBody := sendJSONRequest(t, app, http.MethodPost, "/api/analysis-rules", body)
+	assert.Equal(t, http.StatusCreated, firstResp.StatusCode)
+	assert.Equal(t, true, firstBody["created"])
+
+	firstID, ok := firstBody["id"].(string)
+	assert.True(t, ok)
+	assert.NotEmpty(t, firstID)
+
+	secondResp, secondBody := sendJSONRequest(t, app, http.MethodPost, "/api/analysis-rules", body)
+	assert.Equal(t, http.StatusOK, secondResp.StatusCode)
+	assert.Equal(t, false, secondBody["created"])
+
+	secondID, ok := secondBody["id"].(string)
+	assert.True(t, ok)
+	assert.Equal(t, firstID, secondID)
+}
+
 func TestAnalysisRulePatternCRUDFlow(t *testing.T) {
 	t.Parallel()
 
@@ -116,7 +150,7 @@ func TestAnalysisRulePatternCRUDFlow(t *testing.T) {
 		"severityMin":4,
 		"messageMatchType":"contains",
 		"messagePattern":"connection",
-		"payloadConditions":[{"path":"db.host","operator":"exists"}],
+		"payloadConditions":[{"field":"db.host","operator":"exists"}],
 		"variableMappings":{"service":"checkout"}
 	}`)
 	assert.Equal(t, http.StatusCreated, createResp.StatusCode)
@@ -133,7 +167,7 @@ func TestAnalysisRulePatternCRUDFlow(t *testing.T) {
 		"severityMin":3,
 		"messageMatchType":"contains",
 		"messagePattern":"timeout",
-		"payloadConditions":[{"path":"db.pool","operator":"gt","value":90}],
+		"payloadConditions":[{"field":"db.pool","operator":"gt","value":90}],
 		"variableMappings":{"service":"checkout","region":"us-east-1"}
 	}`)
 	assert.Equal(t, http.StatusOK, updateResp.StatusCode)
@@ -143,4 +177,61 @@ func TestAnalysisRulePatternCRUDFlow(t *testing.T) {
 
 	notFoundResp, _ := sendJSONRequest(t, app, http.MethodDelete, "/api/analysis-rule-patterns/"+patternID, `{}`)
 	assert.Equal(t, http.StatusNotFound, notFoundResp.StatusCode)
+}
+
+func TestAnalysisRulePatternCreateIsIdempotentForDuplicatePayload(t *testing.T) {
+	t.Parallel()
+
+	app := setupRulesApp(t)
+	ruleID := createRuleAndGetID(t, app)
+
+	body := `{
+		"ruleId":"` + ruleID + `",
+		"eventType":"database",
+		"source":"checkout",
+		"environment":"prod",
+		"severityMin":4,
+		"messageMatchType":"contains",
+		"messagePattern":"connection",
+		"payloadConditions":[{"field":"db.host","operator":"exists"}],
+		"variableMappings":{"service":"checkout"}
+	}`
+
+	firstResp, firstBody := sendJSONRequest(t, app, http.MethodPost, "/api/analysis-rule-patterns", body)
+	assert.Equal(t, http.StatusCreated, firstResp.StatusCode)
+	assert.Equal(t, true, firstBody["created"])
+
+	firstID, ok := firstBody["id"].(string)
+	assert.True(t, ok)
+	assert.NotEmpty(t, firstID)
+
+	secondResp, secondBody := sendJSONRequest(t, app, http.MethodPost, "/api/analysis-rule-patterns", body)
+	assert.Equal(t, http.StatusOK, secondResp.StatusCode)
+	assert.Equal(t, false, secondBody["created"])
+
+	secondID, ok := secondBody["id"].(string)
+	assert.True(t, ok)
+	assert.Equal(t, firstID, secondID)
+}
+
+func TestAnalysisRulePatternRejectsUnknownPayloadConditionField(t *testing.T) {
+	t.Parallel()
+
+	app := setupRulesApp(t)
+	ruleID := createRuleAndGetID(t, app)
+
+	resp, body := sendJSONRequest(t, app, http.MethodPost, "/api/analysis-rule-patterns", `{
+		"ruleId":"`+ruleID+`",
+		"eventType":"database",
+		"source":"checkout",
+		"environment":"prod",
+		"severityMin":4,
+		"messageMatchType":"contains",
+		"messagePattern":"connection",
+		"payloadConditions":[{"path":"db.host","operator":"exists"}]
+	}`)
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, strings.ToLower(body["error"].(string)), "unknown field")
+	assert.Contains(t, body["error"].(string), "path")
 }

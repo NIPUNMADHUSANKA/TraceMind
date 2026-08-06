@@ -6,6 +6,7 @@ import (
 	"tracemind/internal/models"
 	"tracemind/internal/queue"
 	"tracemind/internal/store"
+	"tracemind/internal/util"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -44,11 +45,12 @@ func IngestHandler(s store.PostgresStore, q ingestQueue) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req ingestRequestInput
 		if err := c.BodyParser(&req); err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid payload"})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		} else if len(req.Signals) == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "signals is required and must contain at least one item"})
 		}
 		accepted := 0
+		duplicates := 0
 		rejected := 0
 		errs := []string{}
 		acceptedSignals := make([]models.Signal, 0, len(req.Signals))
@@ -69,6 +71,9 @@ func IngestHandler(s store.PostgresStore, q ingestQueue) fiber.Handler {
 				signalErrs = append(signalErrs, "missing severity")
 			} else if *sig.Severity < 0 || *sig.Severity > 5 {
 				signalErrs = append(signalErrs, "invalid severity")
+			}
+			if _, err := util.FormatEnvironment(sig.Env); err != nil {
+				signalErrs = append(signalErrs, err.Error())
 			}
 
 			var parsedTimestamp time.Time
@@ -97,11 +102,13 @@ func IngestHandler(s store.PostgresStore, q ingestQueue) fiber.Handler {
 				sig.ID = uuid.NewString()
 			}
 
+			environment, _ := util.FormatEnvironment(sig.Env)
+
 			validated := models.Signal{
 				ID:        sig.ID,
 				EventType: sig.EventType,
 				Source:    sig.Source,
-				Env:       sig.Env,
+				Env:       environment,
 				Timestamp: parsedTimestamp,
 				Severity:  *sig.Severity,
 				Message:   sig.Message,
@@ -109,7 +116,18 @@ func IngestHandler(s store.PostgresStore, q ingestQueue) fiber.Handler {
 				Metadata:  sig.Metadata,
 			}
 
-			s.SaveSignal(validated)
+			created, err := s.CreateSignal(validated)
+			if err != nil {
+				rejected++
+				errs = append(errs, fmt.Sprintf("signal %d: failed to persist signal", i))
+				continue
+			}
+
+			if !created {
+				duplicates++
+				continue
+			}
+
 			acceptedSignals = append(acceptedSignals, validated)
 			accepted++
 		}
@@ -117,14 +135,15 @@ func IngestHandler(s store.PostgresStore, q ingestQueue) fiber.Handler {
 		if len(acceptedSignals) > 0 {
 			ingID = uuid.NewString()
 			if err := q.Enqueue(queue.IngestionJob{IngestionID: ingID, Signals: acceptedSignals}); err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to enqueue ingestion job"})
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 			}
 		}
 		resp := models.IngestResponse{
-			IngestionID:   ingID,
-			AcceptedCount: accepted,
-			RejectedCount: rejected,
-			Errors:        errs,
+			IngestionID:    ingID,
+			AcceptedCount:  accepted,
+			DuplicateCount: duplicates,
+			RejectedCount:  rejected,
+			Errors:         errs,
 		}
 		return c.Status(fiber.StatusOK).JSON(resp)
 	}

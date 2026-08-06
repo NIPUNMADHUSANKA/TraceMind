@@ -3,6 +3,7 @@ package api
 import (
 	"strings"
 	"tracemind/internal/store"
+	"tracemind/internal/util"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -29,7 +30,7 @@ func parsePayloadFilterRequest(c *fiber.Ctx) ([]string, error) {
 	var req PayloadFilterRequestInput
 
 	if err := c.BodyParser(&req); err != nil {
-		return nil, fiber.NewError(fiber.StatusBadRequest, "request body must be valid JSON")
+		return nil, fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 
 	payloadList := normalizePayloadList(req.Payloads)
@@ -47,13 +48,18 @@ func PayloadFilter(s store.PostgresStore) fiber.Handler {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "environment path parameter is required"})
 		}
 
+		env, err := util.FormatEnvironment(env)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+
 		payloadList, err := parsePayloadFilterRequest(c)
 		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "request body must be valid JSON"})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 
 		if err := s.SavePayloadFilterConfig(env, payloadList); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update payload allow-list"})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
 		store.ConfigurePayloadAllowList(s, env)
@@ -75,14 +81,19 @@ func DeletePayloadFilter(s store.PostgresStore) fiber.Handler {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "environment path parameter is required"})
 		}
 
+		env, err := util.FormatEnvironment(env)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+
 		payloadList, err := parsePayloadFilterRequest(c)
 		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "request body must be valid JSON"})
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 
 		deleted, err := s.DeletePayloadFilterConfig(env, payloadList)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update payload allow-list"})
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
 		store.ConfigurePayloadAllowList(s, env)
