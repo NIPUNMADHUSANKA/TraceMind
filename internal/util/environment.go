@@ -14,7 +14,7 @@ func FormatEnvironment(env string) (string, error) {
 	case "staging", "stage":
 		return "staging", nil
 	case "dev", "development":
-		return "dev", nil
+		return "development", nil
 	}
 
 	return normalized, fmt.Errorf("invalid environment: %s", normalized)

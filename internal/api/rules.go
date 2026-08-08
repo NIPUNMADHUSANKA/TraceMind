@@ -176,12 +176,12 @@ func parseAnalysisRuleRequest(c *fiber.Ctx) (models.AnalysisRule, error) {
 		return models.AnalysisRule{}, fiber.NewError(fiber.StatusBadRequest, "hypothesisTemplate is required")
 	}
 
-	var priority int
+	priority := 100
 	if req.Priority != nil {
 		if *req.Priority >= 0 && *req.Priority <= 100 {
 			priority = *req.Priority
 		} else {
-			return models.AnalysisRule{}, fiber.NewError(fiber.StatusBadRequest, "The priority value must be between 0 and 100.")
+			priority = 100
 		}
 	}
 	enabled := true
@@ -196,12 +196,12 @@ func parseAnalysisRuleRequest(c *fiber.Ctx) (models.AnalysisRule, error) {
 	} else {
 		return models.AnalysisRule{}, fiber.NewError(fiber.StatusBadRequest, "The matchType value must be either SINGLE or CORRELATION.")
 	}
-	var version int
+	version := 1
 	if req.Version != nil {
-		if *req.Version > 0 {
+		if *req.Version >= 1 {
 			version = *req.Version
 		} else {
-			return models.AnalysisRule{}, fiber.NewError(fiber.StatusBadRequest, "The version cannot be negative")
+			return models.AnalysisRule{}, fiber.NewError(fiber.StatusBadRequest, "The version must be at least 1")
 		}
 	}
 
