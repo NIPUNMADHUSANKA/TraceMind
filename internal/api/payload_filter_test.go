@@ -89,6 +89,34 @@ func TestPayloadFilter_UpdatesAllowListAndReturnsMessage(t *testing.T) {
 	assert.ElementsMatch(t, []string{"requestId", "traceId"}, allowList)
 }
 
+func TestPayloadFilter_DuplicateRequestIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	app, _ := setupPayloadFilterApp(t)
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/api/payload-filters/prod", strings.NewReader(`{"payloads":["requestId","traceId"]}`))
+	firstReq.Header.Set("Content-Type", "application/json")
+
+	firstResp, err := app.Test(firstReq)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, firstResp.StatusCode)
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/api/payload-filters/prod", strings.NewReader(`{"payloads":["traceId","requestId"]}`))
+	secondReq.Header.Set("Content-Type", "application/json")
+
+	secondResp, err := app.Test(secondReq)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, secondResp.StatusCode)
+
+	var body map[string]interface{}
+	assert.NoError(t, json.NewDecoder(secondResp.Body).Decode(&body))
+	assert.Equal(t, "success", body["status"])
+	assert.Equal(t, "payload allow-list updated", body["message"])
+	assert.Equal(t, "prod", body["environment"])
+	assert.Equal(t, float64(2), body["count"])
+	assert.NotContains(t, body, "error")
+}
+
 func TestDeletePayloadFilter_InvalidJSON(t *testing.T) {
 	t.Parallel()
 

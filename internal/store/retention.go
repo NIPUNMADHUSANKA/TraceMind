@@ -18,7 +18,7 @@ func ConfigurePayloadAllowList(s PostgresStore, env string) {
 	payloadAllowListMu.Lock()
 	defer payloadAllowListMu.Unlock()
 	if err != nil {
-		log.Printf("store: load payload filter config failed: %v", err)
+		log.Printf("store: load payload filter config failed: %v", err.Error())
 		payloadAllowList = nil
 		return
 	}

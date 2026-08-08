@@ -102,12 +102,58 @@ CREATE TABLE IF NOT EXISTS analysis_rules (
 	confidence float(20),
 	priority int NOT NULL DEFAULT 100,
 	enabled boolean NOT NULL DEFAULT TRUE,
-	match_type varchar(10) NOT NULL DEFAULT 'ALL',
+	match_type varchar(20) NOT NULL DEFAULT 'ALL',
 	hypothesis_template text NOT NULL,
 	recommendations jsonb NOT NULL DEFAULT '[]',
 	version int NOT NULL DEFAULT 1,
 	created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	_, err = db.Exec(`
+UPDATE analysis_rules
+SET match_type = 'ALL'
+WHERE match_type IS NULL;
+`)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	_, err = db.Exec(`
+ALTER TABLE analysis_rules
+ALTER COLUMN match_type SET DEFAULT 'ALL';
+`)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	_, err = db.Exec(`
+ALTER TABLE analysis_rules
+ALTER COLUMN match_type SET NOT NULL;
+`)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	_, err = db.Exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS analysis_rules_idempotency_key_idx ON analysis_rules (
+	name,
+	description,
+	confidence,
+	priority,
+	enabled,
+	match_type,
+	hypothesis_template,
+	recommendations,
+	version
 );
 `)
 
@@ -146,7 +192,7 @@ CREATE TABLE IF NOT EXISTS analysis_rules_patterns (
         CHECK (
             message_match_type IS NULL
             OR message_match_type IN (
-                'substring',
+                'contains',
                 'regex',
                 'exact'
             )
@@ -164,6 +210,24 @@ CREATE TABLE IF NOT EXISTS analysis_rules_patterns (
 
     CONSTRAINT chk_signal_patterns_variable_mappings_object
         CHECK (jsonb_typeof(variable_mappings) = 'object')
+);
+`)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	_, err = db.Exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS analysis_rules_patterns_idempotency_key_idx ON analysis_rules_patterns (
+	rule_id,
+	event_type,
+	source,
+	environment,
+	severity_min,
+	message_match_type,
+	message_pattern,
+	payload_conditions,
+	variable_mappings
 );
 `)
 	if err != nil {
@@ -224,6 +288,50 @@ ON CONFLICT (id) DO UPDATE SET
 	if err != nil {
 		log.Printf("store: save signal failed: %v", err)
 	}
+}
+
+func (p *PostgresStore) CreateSignal(sig models.Signal) (bool, error) {
+	if sig.ID == "" {
+		sig.ID = util.GenID()
+	}
+	if sig.Timestamp.IsZero() {
+		sig.Timestamp = time.Now().UTC()
+	}
+	sig.Message = SanitizeMessage(sig.Message)
+	sig.Payload = RedactPayloadByAllowList(sig.Payload, payloadAllowListSnapshot())
+
+	payloadJSON, err := json.Marshal(sig.Payload)
+	if err != nil {
+		return false, err
+	}
+	metadataJSON, err := json.Marshal(sig.Metadata)
+	if err != nil {
+		return false, err
+	}
+
+	res, err := p.db.Exec(`INSERT INTO signals (id, event_type, source, env, timestamp, severity, message, payload, metadata)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT (id) DO NOTHING`,
+		sig.ID,
+		sig.EventType,
+		sig.Source,
+		sig.Env,
+		sig.Timestamp,
+		sig.Severity,
+		sig.Message,
+		payloadJSON,
+		metadataJSON,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	return rows > 0, nil
 }
 
 func (p *PostgresStore) GetSignal(id string) (models.Signal, bool) {
@@ -403,13 +511,7 @@ func (p *PostgresStore) UpdateIncidentStatus(id string, status string) error {
 	return nil
 }
 
-func (p *PostgresStore) CreateAnalysisRule(rule models.AnalysisRule) (string, error) {
-	if rule.ID == "" {
-		rule.ID = util.GenID()
-	}
-	if rule.Priority == 0 {
-		rule.Priority = 100
-	}
+func (p *PostgresStore) CreateAnalysisRule(rule models.AnalysisRule) (string, bool, error) {
 	if rule.MatchType == "" {
 		rule.MatchType = "ALL"
 	}
@@ -419,11 +521,19 @@ func (p *PostgresStore) CreateAnalysisRule(rule models.AnalysisRule) (string, er
 
 	recommendationsJSON, err := json.Marshal(rule.Recommendations)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
-	_, err = p.db.Exec(`INSERT INTO analysis_rules (id, name, description, confidence, priority, enabled, match_type, hypothesis_template, recommendations, version, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+	if rule.ID == "" {
+		rule.ID = util.GenID()
+	}
+
+	var insertedID string
+	err = p.db.QueryRow(`INSERT INTO analysis_rules (id, name, description, confidence, priority, enabled, match_type, hypothesis_template, recommendations, version, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+ON CONFLICT (name, description, confidence, priority, enabled, match_type, hypothesis_template, recommendations, version)
+DO NOTHING
+RETURNING id`,
 		rule.ID,
 		rule.Name,
 		rule.Description,
@@ -434,12 +544,42 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
 		rule.HypothesisTemplate,
 		recommendationsJSON,
 		rule.Version,
-	)
-	if err != nil {
-		return "", err
+	).Scan(&insertedID)
+	if err == nil {
+		return insertedID, true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", false, err
 	}
 
-	return rule.ID, nil
+	var existingID string
+	err = p.db.QueryRow(`SELECT id
+FROM analysis_rules
+WHERE name = $1
+	AND description = $2
+	AND confidence = $3
+	AND priority = $4
+	AND enabled = $5
+	AND COALESCE(match_type, 'ALL') = $6
+	AND hypothesis_template = $7
+	AND recommendations = $8::jsonb
+	AND version = $9
+LIMIT 1`,
+		rule.Name,
+		rule.Description,
+		rule.Confidence,
+		rule.Priority,
+		rule.Enabled,
+		rule.MatchType,
+		rule.HypothesisTemplate,
+		recommendationsJSON,
+		rule.Version,
+	).Scan(&existingID)
+	if err != nil {
+		return "", false, err
+	}
+
+	return existingID, false, nil
 }
 
 func (p *PostgresStore) UpdateAnalysisRule(id string, rule models.AnalysisRule) error {
@@ -644,22 +784,27 @@ ORDER BY r.priority DESC, r.created_at DESC, p.created_at ASC`, pq.Array(eventTy
 	return rules, nil
 }
 
-func (p *PostgresStore) CreateAnalysisRulePattern(pattern models.AnalysisRulePattern) (string, error) {
+func (p *PostgresStore) CreateAnalysisRulePattern(pattern models.AnalysisRulePattern) (string, bool, error) {
+
+	payloadConditionsJSON, err := json.Marshal(pattern.PayloadConditions)
+	if err != nil {
+		return "", false, err
+	}
+	variableMappingsJSON, err := json.Marshal(pattern.VariableMappings)
+	if err != nil {
+		return "", false, err
+	}
+
 	if pattern.ID == "" {
 		pattern.ID = uuid.NewString()
 	}
 
-	payloadConditionsJSON, err := json.Marshal(pattern.PayloadConditions)
-	if err != nil {
-		return "", err
-	}
-	variableMappingsJSON, err := json.Marshal(pattern.VariableMappings)
-	if err != nil {
-		return "", err
-	}
-
-	_, err = p.db.Exec(`INSERT INTO analysis_rules_patterns (id, rule_id, event_type, source, environment, severity_min, message_match_type, message_pattern, payload_conditions, variable_mappings, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
+	var insertedID string
+	err = p.db.QueryRow(`INSERT INTO analysis_rules_patterns (id, rule_id, event_type, source, environment, severity_min, message_match_type, message_pattern, payload_conditions, variable_mappings, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+ON CONFLICT (rule_id, event_type, source, environment, severity_min, message_match_type, message_pattern, payload_conditions, variable_mappings)
+DO NOTHING
+RETURNING id`,
 		pattern.ID,
 		pattern.RuleID,
 		nullableString(pattern.EventType),
@@ -670,12 +815,42 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`,
 		nullableString(pattern.MessagePattern),
 		payloadConditionsJSON,
 		variableMappingsJSON,
-	)
-	if err != nil {
-		return "", err
+	).Scan(&insertedID)
+	if err == nil {
+		return insertedID, true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", false, err
 	}
 
-	return pattern.ID, nil
+	var existingID string
+	err = p.db.QueryRow(`SELECT id
+FROM analysis_rules_patterns
+WHERE rule_id = $1
+	AND event_type = $2
+	AND source = $3
+	AND environment = $4
+	AND severity_min = $5
+	AND message_match_type = $6
+	AND message_pattern = $7
+	AND payload_conditions = $8::jsonb
+	AND variable_mappings = $9::jsonb
+LIMIT 1`,
+		pattern.RuleID,
+		nullableString(pattern.EventType),
+		nullableString(pattern.Source),
+		nullableString(pattern.Environment),
+		pattern.SeverityMin,
+		nullableString(pattern.MessageMatchType),
+		nullableString(pattern.MessagePattern),
+		payloadConditionsJSON,
+		variableMappingsJSON,
+	).Scan(&existingID)
+	if err != nil {
+		return "", false, err
+	}
+
+	return existingID, false, nil
 }
 
 func (p *PostgresStore) UpdateAnalysisRulePattern(id string, pattern models.AnalysisRulePattern) error {

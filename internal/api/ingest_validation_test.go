@@ -206,3 +206,33 @@ func TestIngestValidation_AllRejectedHasNoIngestionID(t *testing.T) {
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, queue.ErrQueueEmpty))
 }
+
+func TestIngestValidation_DuplicateSignalIDIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	app, q := setupIngestApp(t)
+	body := `{"sourceContext":"local","signals":[{"id":"sig-idempotent-1","eventType":"log","source":"svc-a","environment":"prod","severity":5}]}`
+
+	firstResp, firstGot := postIngest(t, app, body)
+	assert.Equal(t, http.StatusOK, firstResp.StatusCode)
+	assert.Equal(t, 1, firstGot.AcceptedCount)
+	assert.Equal(t, 0, firstGot.DuplicateCount)
+	assert.Equal(t, 0, firstGot.RejectedCount)
+	assert.NotEmpty(t, firstGot.IngestionID)
+
+	secondResp, secondGot := postIngest(t, app, body)
+	assert.Equal(t, http.StatusOK, secondResp.StatusCode)
+	assert.Equal(t, 0, secondGot.AcceptedCount)
+	assert.Equal(t, 1, secondGot.DuplicateCount)
+	assert.Equal(t, 0, secondGot.RejectedCount)
+	assert.Empty(t, secondGot.IngestionID)
+
+	firstDelivery, err := q.Dequeue(context.Background())
+	assert.NoError(t, err)
+	assert.Len(t, firstDelivery.Job.Signals, 1)
+	assert.Equal(t, "sig-idempotent-1", firstDelivery.Job.Signals[0].ID)
+
+	_, err = q.Dequeue(context.Background())
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, queue.ErrQueueEmpty))
+}

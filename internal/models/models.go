@@ -1,6 +1,11 @@
 package models
 
-import "time"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"time"
+)
 
 type RuleMatchType string
 
@@ -40,6 +45,7 @@ type IngestRequest struct {
 type IngestResponse struct {
 	IngestionID   string   `json:"ingestionId"`
 	AcceptedCount int      `json:"acceptedCount"`
+	DuplicateCount int     `json:"duplicateCount,omitempty"`
 	RejectedCount int      `json:"rejectedCount"`
 	Errors        []string `json:"errors,omitempty"`
 }
@@ -73,6 +79,20 @@ type PayloadCondition struct {
 	Field    string      `json:"field"`
 	Operator string      `json:"operator"`
 	Value    interface{} `json:"value"`
+}
+
+func (p *PayloadCondition) UnmarshalJSON(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+
+	type payloadConditionAlias PayloadCondition
+	var alias payloadConditionAlias
+	if err := decoder.Decode(&alias); err != nil {
+		return fmt.Errorf("invalid payload condition: %w", err)
+	}
+
+	*p = PayloadCondition(alias)
+	return nil
 }
 
 // AnalysisRule stores a deterministic analysis rule configuration.
