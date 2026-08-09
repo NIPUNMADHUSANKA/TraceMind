@@ -13,6 +13,8 @@ import (
 	"tracemind/internal/models"
 	"tracemind/internal/queue"
 
+	"github.com/google/uuid"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
@@ -188,6 +190,48 @@ func TestIngestValidation_QueuesOnlyAcceptedSignals(t *testing.T) {
 	assert.Len(t, delivery.Job.Signals, 1)
 	assert.Equal(t, "svc-a", delivery.Job.Signals[0].Source)
 	assert.Equal(t, "log", delivery.Job.Signals[0].EventType)
+}
+
+func TestIngestValidation_ProducesIncidentImmediatelyInProduction(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+
+	app := fiber.New()
+	s, cleanup := newTestPostgresStore(t)
+	t.Cleanup(cleanup)
+	q := queue.NewQueue()
+	app.Post("/api/ingest", api.IngestHandler(s, q))
+
+	signalID := uuid.NewString()
+	body := `{"sourceContext":"local","signals":[{"id":"` + signalID + `","eventType":"log","source":"payment-api","environment":"prod","severity":4,"message":"retry triggered"}]}`
+
+	resp, got := postIngest(t, app, body)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, 1, got.AcceptedCount)
+
+	_, err := q.Dequeue(context.Background())
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, queue.ErrQueueEmpty))
+
+	incidents := s.ListIncidents()
+	var matched models.Incident
+	for _, inc := range incidents {
+		if containsSignalID(inc.SignalIDs, signalID) {
+			matched = inc
+			break
+		}
+	}
+	assert.NotEmpty(t, matched.ID)
+	assert.Equal(t, "payment-api", matched.ImpactedServices[0])
+	assert.Contains(t, matched.Environments, "production")
+}
+
+func containsSignalID(signalIDs []string, target string) bool {
+	for _, id := range signalIDs {
+		if id == target {
+			return true
+		}
+	}
+	return false
 }
 
 func TestIngestValidation_AllRejectedHasNoIngestionID(t *testing.T) {
