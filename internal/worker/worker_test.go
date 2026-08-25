@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 	"tracemind/internal/models"
+	"tracemind/internal/queue"
+	"tracemind/internal/store"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -21,4 +23,10 @@ func TestGroupBySourceAndWindow_SplitsBySourceEnvAndGap(t *testing.T) {
 
 	groups := groupBySourceAndWindow(signals, 30*time.Second)
 	assert.Len(t, groups, 3)
+}
+
+func TestProcessJob_ReturnsAnError(t *testing.T) {
+	if err := processJob(queue.IngestionJob{}, store.PostgresStore{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }

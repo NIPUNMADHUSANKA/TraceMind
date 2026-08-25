@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"tracemind/internal/api"
-	"tracemind/internal/queue"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
@@ -19,7 +18,7 @@ func setupApp(t *testing.T) *fiber.App {
 	app := fiber.New()
 	s, cleanup := newTestPostgresStore(t)
 	t.Cleanup(cleanup)
-	q := queue.NewQueue()
+	q := newIngestTestQueue()
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})

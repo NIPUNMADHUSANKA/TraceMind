@@ -1,28 +1,27 @@
 package api
 
 import (
+	"context"
 	"tracemind/internal/queue"
-	"tracemind/internal/store"
 
 	"github.com/gofiber/fiber/v2"
 )
 
 type queueStatsProvider interface {
-	Stats() queue.QueueStats
+	Health(context.Context) (*queue.QueueHealth, error)
 }
 
-func HealthHandler(q queueStatsProvider, s store.PostgresStore) fiber.Handler {
+func HealthHandler(q queueStatsProvider) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		stats := q.Stats()
-		incCount := len(s.ListIncidents())
+		stats, err := q.Health(context.Background())
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
 		return c.JSON(fiber.Map{
-			"ingestion": fiber.Map{
-				"queueDepth":             stats.Depth,
-				"retryCount":             stats.RetryCount,
-				"deadLetterCount":        stats.DeadLetterCount,
-				"lastProcessedTimestamp": stats.LastProcessedTimestamp,
-			},
-			"incidents": incCount,
+			"status":    "healthy",
+			"available": stats.Available,
+			"inFlight":  stats.InFlight,
+			"delayed":   stats.Delayed,
 		})
 	}
 }
