@@ -37,13 +37,11 @@ func (e *ruleEngine) Analyze(incident models.Incident, evidence []models.Signal,
 
 	rules, err := s.GetEnabledAnalysisRulesByPattern(eventType, source, environment)
 	if err != nil {
-		hypotheses := []string{}
-		recommendations := []string{}
-		hypotheses = append(hypotheses, "insufficient deterministic evidence")
-		recommendations = append(recommendations,
+		hypotheses := []string{"insufficient deterministic evidence"}
+		recommendations := []string{
 			"Collect additional traces and infrastructure metrics for this window.",
 			"Escalate to hybrid analysis with service owner context.",
-		)
+		}
 		return models.AnalysisResult{
 			IncidentID:      incident.ID,
 			Hypotheses:      dedupeStrings(hypotheses),
@@ -51,7 +49,7 @@ func (e *ruleEngine) Analyze(incident models.Incident, evidence []models.Signal,
 			Recommendations: dedupeStrings(recommendations),
 			Timestamp:       time.Now().UTC(),
 			Source:          "hybrid",
-		}, fmt.Errorf("get enabled analysis rules: %w", err)
+		}, nil
 	}
 
 	hypotheses := []string{}
