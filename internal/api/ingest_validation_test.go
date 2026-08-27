@@ -19,13 +19,30 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func setupIngestApp(t *testing.T) (*fiber.App, *queue.ReliableQueue) {
+type ingestTestQueue struct {
+	*queue.ReliableQueue
+}
+
+func newIngestTestQueue() *ingestTestQueue {
+	return &ingestTestQueue{ReliableQueue: queue.NewReliableQueue(queue.QueueConfig{MaxAttempts: 3})}
+}
+
+func (q *ingestTestQueue) Enqueue(ctx context.Context, job queue.IngestionJob) error {
+	_ = ctx
+	return q.ReliableQueue.Enqueue(job)
+}
+
+func (q *ingestTestQueue) Dequeue(ctx context.Context) (queue.Delivery, error) {
+	return q.ReliableQueue.Dequeue(ctx)
+}
+
+func setupIngestApp(t *testing.T) (*fiber.App, *ingestTestQueue) {
 	t.Helper()
 
 	app := fiber.New()
 	s, cleanup := newTestPostgresStore(t)
 	t.Cleanup(cleanup)
-	q := queue.NewQueue()
+	q := newIngestTestQueue()
 	app.Post("/api/ingest", api.IngestHandler(s, q))
 	return app, q
 }
@@ -198,7 +215,7 @@ func TestIngestValidation_ProducesIncidentImmediatelyInProduction(t *testing.T) 
 	app := fiber.New()
 	s, cleanup := newTestPostgresStore(t)
 	t.Cleanup(cleanup)
-	q := queue.NewQueue()
+	q := newIngestTestQueue()
 	app.Post("/api/ingest", api.IngestHandler(s, q))
 
 	signalID := uuid.NewString()

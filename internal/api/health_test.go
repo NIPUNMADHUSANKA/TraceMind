@@ -1,11 +1,11 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 	"tracemind/internal/api"
 	"tracemind/internal/queue"
 
@@ -14,28 +14,25 @@ import (
 )
 
 type staticQueueStats struct {
-	stats queue.QueueStats
+	health *queue.QueueHealth
+	err    error
 }
 
-func (s staticQueueStats) Stats() queue.QueueStats {
-	return s.stats
+func (s staticQueueStats) Health(context.Context) (*queue.QueueHealth, error) {
+	return s.health, s.err
 }
 
 func TestHealthHandler_IncludesQueueLifecycleMetrics(t *testing.T) {
 	t.Parallel()
 
-	st, cleanup := newTestPostgresStore(t)
-	t.Cleanup(cleanup)
-
-	expected := queue.QueueStats{
-		Depth:                  4,
-		RetryCount:             2,
-		DeadLetterCount:        1,
-		LastProcessedTimestamp: time.Now().UTC().Truncate(time.Second),
+	expected := &queue.QueueHealth{
+		Available: "4",
+		InFlight:  "2",
+		Delayed:   "1",
 	}
 
 	app := fiber.New()
-	app.Get("/api/health/ingestion", api.HealthHandler(staticQueueStats{stats: expected}, st))
+	app.Get("/api/health/ingestion", api.HealthHandler(staticQueueStats{health: expected}))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/health/ingestion", nil)
 	resp, err := app.Test(req)
@@ -43,14 +40,10 @@ func TestHealthHandler_IncludesQueueLifecycleMetrics(t *testing.T) {
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var payload struct {
-		Ingestion map[string]interface{} `json:"ingestion"`
-		Incidents int                    `json:"incidents"`
-	}
+	var payload map[string]interface{}
 	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
-	assert.NotNil(t, payload.Ingestion)
-
-	assert.EqualValues(t, expected.Depth, payload.Ingestion["queueDepth"])
-	assert.EqualValues(t, expected.RetryCount, payload.Ingestion["retryCount"])
-	assert.EqualValues(t, expected.DeadLetterCount, payload.Ingestion["deadLetterCount"])
+	assert.Equal(t, "healthy", payload["status"])
+	assert.EqualValues(t, expected.Available, payload["available"])
+	assert.EqualValues(t, expected.InFlight, payload["inFlight"])
+	assert.EqualValues(t, expected.Delayed, payload["delayed"])
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"time"
 	"tracemind/internal/models"
@@ -38,7 +39,7 @@ type ingestSignalInput struct {
 }
 
 type ingestQueue interface {
-	Enqueue(job queue.IngestionJob) error
+	Enqueue(ctx context.Context, job queue.IngestionJob) error
 }
 
 func IngestHandler(s store.PostgresStore, q ingestQueue) fiber.Handler {
@@ -135,7 +136,7 @@ func IngestHandler(s store.PostgresStore, q ingestQueue) fiber.Handler {
 		if len(acceptedSignals) > 0 {
 			ingID = uuid.NewString()
 			job := queue.IngestionJob{IngestionID: ingID, Signals: acceptedSignals}
-			if err := q.Enqueue(job); err != nil {
+			if err := q.Enqueue(c.UserContext(), job); err != nil {
 				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 			}
 		}

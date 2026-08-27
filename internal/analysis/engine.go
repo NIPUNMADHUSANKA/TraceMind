@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -12,7 +13,7 @@ import (
 
 // Analyzer produces hypothesis and recommendation output for an incident.
 type Analyzer interface {
-	Analyze(incident models.Incident, evidence []models.Signal, s store.PostgresStore) models.AnalysisResult
+	Analyze(incident models.Incident, evidence []models.Signal, s store.PostgresStore) (models.AnalysisResult, error)
 }
 
 type ruleEngine struct{}
@@ -21,7 +22,7 @@ func NewRuleEngine() Analyzer {
 	return &ruleEngine{}
 }
 
-func (e *ruleEngine) Analyze(incident models.Incident, evidence []models.Signal, s store.PostgresStore) models.AnalysisResult {
+func (e *ruleEngine) Analyze(incident models.Incident, evidence []models.Signal, s store.PostgresStore) (models.AnalysisResult, error) {
 
 	var source, environment string
 	var eventType []string
@@ -36,14 +37,11 @@ func (e *ruleEngine) Analyze(incident models.Incident, evidence []models.Signal,
 
 	rules, err := s.GetEnabledAnalysisRulesByPattern(eventType, source, environment)
 	if err != nil {
-		// Log error and proceed with empty rules
-		hypotheses := []string{}
-		recommendations := []string{}
-		hypotheses = append(hypotheses, "insufficient deterministic evidence")
-		recommendations = append(recommendations,
+		hypotheses := []string{"insufficient deterministic evidence"}
+		recommendations := []string{
 			"Collect additional traces and infrastructure metrics for this window.",
 			"Escalate to hybrid analysis with service owner context.",
-		)
+		}
 		return models.AnalysisResult{
 			IncidentID:      incident.ID,
 			Hypotheses:      dedupeStrings(hypotheses),
@@ -51,7 +49,7 @@ func (e *ruleEngine) Analyze(incident models.Incident, evidence []models.Signal,
 			Recommendations: dedupeStrings(recommendations),
 			Timestamp:       time.Now().UTC(),
 			Source:          "hybrid",
-		}
+		}, nil
 	}
 
 	hypotheses := []string{}
@@ -84,6 +82,14 @@ func (e *ruleEngine) Analyze(incident models.Incident, evidence []models.Signal,
 				"Escalate to hybrid analysis with service owner context.",
 				err.Error(),
 			)
+			return models.AnalysisResult{
+				IncidentID:      incident.ID,
+				Hypotheses:      dedupeStrings(hypotheses),
+				Confidence:      confidenceScores(len(hypotheses), analysisSource),
+				Recommendations: dedupeStrings(recommendations),
+				Timestamp:       time.Now().UTC(),
+				Source:          analysisSource,
+			}, fmt.Errorf("generate AI analysis: %w", err)
 		} else {
 			hypotheses = append(hypotheses, aiRes.HypothesisTemplate)
 			recommendations = append(recommendations, aiRes.Recommendations...)
@@ -97,7 +103,7 @@ func (e *ruleEngine) Analyze(incident models.Incident, evidence []models.Signal,
 		Recommendations: dedupeStrings(recommendations),
 		Timestamp:       time.Now().UTC(),
 		Source:          analysisSource,
-	}
+	}, nil
 }
 
 // evaluateRuleAgainstEvidence checks if a rule matches the evidence based on MatchType.

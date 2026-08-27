@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/signal"
@@ -8,6 +9,7 @@ import (
 	"tracemind/internal/api"
 	"tracemind/internal/queue"
 	"tracemind/internal/store"
+	"tracemind/internal/util"
 	"tracemind/internal/worker"
 
 	"github.com/gofiber/fiber/v2"
@@ -30,10 +32,15 @@ func main() {
 		_ = dbConnection.Close()
 	}()
 	var dbConn store.PostgresStore = *dbConnection
-	q := queue.NewQueue()
+	sqs_client, err := util.NewSQSClient(context.Background(), os.Getenv("AWS_REGION"))
+	if err != nil {
+		log.Fatalf("failed to create SQS client: %v", err)
+	}
+	processingQueue := queue.NewSQSQueue(sqs_client, os.Getenv("SQS_PROCESSING_QUEUE_URL"))
+
 	stopCh := make(chan struct{})
 	stopDel := make(chan struct{})
-	worker.StartWorker(q, dbConn, stopCh)
+	worker.StartWorker(processingQueue, dbConn, stopCh)
 
 	env := os.Getenv("APP_ENV")
 	if env == "" {
@@ -52,10 +59,10 @@ func main() {
 	})
 
 	apiGroup := app.Group("/api")
-	apiGroup.Post("/ingest", api.IngestHandler(dbConn, q))
+	apiGroup.Post("/ingest", api.IngestHandler(dbConn, processingQueue))
 	apiGroup.Get("/incidents", api.IncidentsHandler(dbConn))
 	apiGroup.Get("/incidents/:id", api.IncidentGetHandler(dbConn))
-	apiGroup.Get("/health/ingestion", api.HealthHandler(q, dbConn))
+	apiGroup.Get("/health/ingestion", api.HealthHandler(processingQueue))
 	apiGroup.Post("/payload-filters/:environment", api.PayloadFilter(dbConn))
 	apiGroup.Delete("/payload-filters/:environment", api.DeletePayloadFilter(dbConn))
 	apiGroup.Post("/analysis-rules", api.CreateAnalysisRuleHandler(dbConn))

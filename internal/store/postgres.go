@@ -429,7 +429,7 @@ func (p *PostgresStore) DeleteIncidentsOlderThanBatch(cutoff time.Time, batchSiz
 	return int(affected)
 }
 
-func (p *PostgresStore) SaveIncident(inc models.Incident) {
+func (p *PostgresStore) SaveIncident(inc models.Incident) error {
 	if inc.ID == "" {
 		inc.ID = util.GenID()
 	}
@@ -440,23 +440,19 @@ func (p *PostgresStore) SaveIncident(inc models.Incident) {
 
 	signalIDsJSON, err := json.Marshal(inc.SignalIDs)
 	if err != nil {
-		log.Printf("store: marshal incident signal IDs failed: %v", err)
-		return
+		return fmt.Errorf("store: marshal incident signal IDs: %w", err)
 	}
 	impactedJSON, err := json.Marshal(inc.ImpactedServices)
 	if err != nil {
-		log.Printf("store: marshal incident impacted services failed: %v", err)
-		return
+		return fmt.Errorf("store: marshal incident impacted services: %w", err)
 	}
 	envJSON, err := json.Marshal(inc.Environments)
 	if err != nil {
-		log.Printf("store: marshal incident environments failed: %v", err)
-		return
+		return fmt.Errorf("store: marshal incident environments: %w", err)
 	}
 	recommendationsJSON, err := json.Marshal(inc.Recommendations)
 	if err != nil {
-		log.Printf("store: marshal incident recommendations failed: %v", err)
-		return
+		return fmt.Errorf("store: marshal incident recommendations: %w", err)
 	}
 	_, err = p.db.Exec(`INSERT INTO incidents (id, title, status, severity, impacted_services, environments, signal_ids, analysis_summary, recommendations, created_at, updated_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -482,8 +478,9 @@ ON CONFLICT (id) DO UPDATE SET
 		inc.CreatedAt,
 		inc.UpdatedAt)
 	if err != nil {
-		log.Printf("store: save incident failed: %v", err)
+		return fmt.Errorf("store: save incident: %w", err)
 	}
+	return nil
 }
 
 func (p *PostgresStore) UpdateIncidentStatus(id string, status string) error {
@@ -655,6 +652,9 @@ func (p *PostgresStore) DeleteAnalysisRule(id string) error {
 // provided event types, source, and environment. Returned rules include only
 // the matching patterns.
 func (p *PostgresStore) GetEnabledAnalysisRulesByPattern(eventTypes []string, source string, environment string) ([]models.AnalysisRule, error) {
+	if p == nil || p.db == nil {
+		return nil, errors.New("db connection is nil")
+	}
 	source = strings.TrimSpace(source)
 	environment = strings.TrimSpace(environment)
 
