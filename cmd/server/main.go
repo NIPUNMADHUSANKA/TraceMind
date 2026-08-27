@@ -33,10 +33,10 @@ func main() {
 	}()
 	var dbConn store.PostgresStore = *dbConnection
 	sqs_client, err := util.NewSQSClient(context.Background(), os.Getenv("AWS_REGION"))
-	processingQueue := queue.NewSQSQueue(sqs_client, os.Getenv("SQS_PROCESSING_QUEUE_URL"))
 	if err != nil {
 		log.Fatalf("failed to create SQS client: %v", err)
 	}
+	processingQueue := queue.NewSQSQueue(sqs_client, os.Getenv("SQS_PROCESSING_QUEUE_URL"))
 
 	stopCh := make(chan struct{})
 	stopDel := make(chan struct{})

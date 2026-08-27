@@ -652,6 +652,9 @@ func (p *PostgresStore) DeleteAnalysisRule(id string) error {
 // provided event types, source, and environment. Returned rules include only
 // the matching patterns.
 func (p *PostgresStore) GetEnabledAnalysisRulesByPattern(eventTypes []string, source string, environment string) ([]models.AnalysisRule, error) {
+	if p == nil || p.db == nil {
+		return nil, errors.New("db connection is nil")
+	}
 	source = strings.TrimSpace(source)
 	environment = strings.TrimSpace(environment)
 

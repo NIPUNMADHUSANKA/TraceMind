@@ -72,11 +72,7 @@ func (q *SQSQueue) Ack(receipt string, ctx context.Context) error {
 		ReceiptHandle: aws.String(receipt),
 	})
 
-	if err != nil {
-		return err
-	} else {
-		return nil
-	}
+	return err
 }
 
 func (q *SQSQueue) Nack(receipt string, ctx context.Context) error {

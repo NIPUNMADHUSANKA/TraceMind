@@ -136,7 +136,7 @@ func IngestHandler(s store.PostgresStore, q ingestQueue) fiber.Handler {
 		if len(acceptedSignals) > 0 {
 			ingID = uuid.NewString()
 			job := queue.IngestionJob{IngestionID: ingID, Signals: acceptedSignals}
-			if err := q.Enqueue(context.Background(), job); err != nil {
+			if err := q.Enqueue(c.UserContext(), job); err != nil {
 				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 			}
 		}

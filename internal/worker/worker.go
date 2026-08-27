@@ -53,6 +53,13 @@ func StartWorker(q deliveryQueue, st store.PostgresStore, stopch <-chan struct{}
 				time.Sleep(10 * time.Millisecond)
 				continue
 			}
+			if deliveryInput == nil {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+
+			receiptHandle := aws.ToString(deliveryInput.ReceiptHandle)
+			messageID := aws.ToString(deliveryInput.MessageId)
 
 			body := aws.ToString(deliveryInput.Body)
 			var delivery queue.IngestionJob
@@ -65,14 +72,14 @@ func StartWorker(q deliveryQueue, st store.PostgresStore, stopch <-chan struct{}
 			}
 
 			if err := processDelivery(delivery, st); err != nil {
-				if nackErr := q.Nack(*deliveryInput.ReceiptHandle, context.Background()); nackErr != nil {
-					log.Printf("worker: nack failed for receipt %s: %v", *deliveryInput.MessageId, nackErr)
+				if nackErr := q.Nack(receiptHandle, context.Background()); nackErr != nil {
+					log.Printf("worker: nack failed for receipt %s: %v", messageID, nackErr)
 				}
 				continue
 			}
 
-			if err := q.Ack(*deliveryInput.ReceiptHandle, context.Background()); err != nil {
-				log.Printf("worker: ack failed for receipt %s: %v", *deliveryInput.MessageId, err)
+			if err := q.Ack(receiptHandle, context.Background()); err != nil {
+				log.Printf("worker: ack failed for receipt %s: %v", messageID, err)
 			}
 		}
 	}()

@@ -13,9 +13,9 @@ type queueStatsProvider interface {
 
 func HealthHandler(q queueStatsProvider) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		stats, err := q.Health(context.Background())
+		stats, err := q.Health(c.UserContext())
 		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": err.Error()})
 		}
 		return c.JSON(fiber.Map{
 			"status":    "healthy",
