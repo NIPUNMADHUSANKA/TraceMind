@@ -19,13 +19,40 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func setupIngestApp(t *testing.T) (*fiber.App, *queue.ReliableQueue) {
+type ingestTestQueue struct {
+	*queue.ReliableQueue
+}
+
+func newIngestTestQueue() *ingestTestQueue {
+	return &ingestTestQueue{ReliableQueue: queue.NewReliableQueue(queue.QueueConfig{MaxAttempts: 3})}
+}
+
+func (q *ingestTestQueue) Enqueue(ctx context.Context, job queue.IngestionJob) error {
+	_ = ctx
+	return q.ReliableQueue.Enqueue(job)
+}
+
+func (q *ingestTestQueue) Dequeue(ctx context.Context) (queue.Delivery, error) {
+	return q.ReliableQueue.Dequeue(ctx)
+}
+
+type failingIngestQueue struct {
+	err         error
+	ingestionID string
+}
+
+func (q *failingIngestQueue) Enqueue(_ context.Context, job queue.IngestionJob) error {
+	q.ingestionID = job.IngestionID
+	return q.err
+}
+
+func setupIngestApp(t *testing.T) (*fiber.App, *ingestTestQueue) {
 	t.Helper()
 
 	app := fiber.New()
 	s, cleanup := newTestPostgresStore(t)
 	t.Cleanup(cleanup)
-	q := queue.NewQueue()
+	q := newIngestTestQueue()
 	app.Post("/api/ingest", api.IngestHandler(s, q))
 	return app, q
 }
@@ -192,13 +219,36 @@ func TestIngestValidation_QueuesOnlyAcceptedSignals(t *testing.T) {
 	assert.Equal(t, "log", delivery.Job.Signals[0].EventType)
 }
 
+func TestIngestValidation_MarksIngestionFailedWhenEnqueueFails(t *testing.T) {
+	s, cleanup := newTestPostgresStore(t)
+	t.Cleanup(cleanup)
+
+	app := fiber.New()
+	q := &failingIngestQueue{err: errors.New("queue unavailable")}
+	app.Post("/api/ingest", api.IngestHandler(s, q))
+
+	resp, err := app.Test(httptest.NewRequest(
+		http.MethodPost,
+		"/api/ingest",
+		strings.NewReader(`{"sourceContext":"local","signals":[{"eventType":"log","source":"svc-a","severity":5}]}`),
+	))
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.NoError(t, resp.Body.Close())
+
+	status, found, err := s.GetIngestionStatus(q.ingestionID)
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "failed", status.Status)
+}
+
 func TestIngestValidation_ProducesIncidentImmediatelyInProduction(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 
 	app := fiber.New()
 	s, cleanup := newTestPostgresStore(t)
 	t.Cleanup(cleanup)
-	q := queue.NewQueue()
+	q := newIngestTestQueue()
 	app.Post("/api/ingest", api.IngestHandler(s, q))
 
 	signalID := uuid.NewString()

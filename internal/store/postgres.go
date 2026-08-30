@@ -95,6 +95,19 @@ CREATE TABLE IF NOT EXISTS payload_filter_configs (
 	}
 
 	_, err = db.Exec(`
+CREATE TABLE IF NOT EXISTS ingestion_statuses (
+    event_id text PRIMARY KEY,
+	event_status text NOT NULL,
+	create_time timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	update_time timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	_, err = db.Exec(`
 CREATE TABLE IF NOT EXISTS analysis_rules (
 	id text PRIMARY KEY,
 	name varchar(200) NOT NULL,
@@ -429,7 +442,7 @@ func (p *PostgresStore) DeleteIncidentsOlderThanBatch(cutoff time.Time, batchSiz
 	return int(affected)
 }
 
-func (p *PostgresStore) SaveIncident(inc models.Incident) {
+func (p *PostgresStore) SaveIncident(inc models.Incident) error {
 	if inc.ID == "" {
 		inc.ID = util.GenID()
 	}
@@ -440,23 +453,19 @@ func (p *PostgresStore) SaveIncident(inc models.Incident) {
 
 	signalIDsJSON, err := json.Marshal(inc.SignalIDs)
 	if err != nil {
-		log.Printf("store: marshal incident signal IDs failed: %v", err)
-		return
+		return fmt.Errorf("store: marshal incident signal IDs: %w", err)
 	}
 	impactedJSON, err := json.Marshal(inc.ImpactedServices)
 	if err != nil {
-		log.Printf("store: marshal incident impacted services failed: %v", err)
-		return
+		return fmt.Errorf("store: marshal incident impacted services: %w", err)
 	}
 	envJSON, err := json.Marshal(inc.Environments)
 	if err != nil {
-		log.Printf("store: marshal incident environments failed: %v", err)
-		return
+		return fmt.Errorf("store: marshal incident environments: %w", err)
 	}
 	recommendationsJSON, err := json.Marshal(inc.Recommendations)
 	if err != nil {
-		log.Printf("store: marshal incident recommendations failed: %v", err)
-		return
+		return fmt.Errorf("store: marshal incident recommendations: %w", err)
 	}
 	_, err = p.db.Exec(`INSERT INTO incidents (id, title, status, severity, impacted_services, environments, signal_ids, analysis_summary, recommendations, created_at, updated_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -482,8 +491,9 @@ ON CONFLICT (id) DO UPDATE SET
 		inc.CreatedAt,
 		inc.UpdatedAt)
 	if err != nil {
-		log.Printf("store: save incident failed: %v", err)
+		return fmt.Errorf("store: save incident: %w", err)
 	}
+	return nil
 }
 
 func (p *PostgresStore) UpdateIncidentStatus(id string, status string) error {
@@ -655,6 +665,9 @@ func (p *PostgresStore) DeleteAnalysisRule(id string) error {
 // provided event types, source, and environment. Returned rules include only
 // the matching patterns.
 func (p *PostgresStore) GetEnabledAnalysisRulesByPattern(eventTypes []string, source string, environment string) ([]models.AnalysisRule, error) {
+	if p == nil || p.db == nil {
+		return nil, errors.New("db connection is nil")
+	}
 	source = strings.TrimSpace(source)
 	environment = strings.TrimSpace(environment)
 
@@ -1131,4 +1144,49 @@ func (p *PostgresStore) GetIncident(id string) (models.Incident, bool) {
 		}
 	}
 	return inc, true
+}
+
+func (p *PostgresStore) CreateIngestionStatus(eventID, status string) error {
+	if p == nil || p.db == nil {
+		return nil
+	}
+	_, err := p.db.Exec(`
+INSERT INTO ingestion_statuses (event_id, event_status, create_time, update_time)
+VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT (event_id) DO NOTHING`, eventID, status)
+	return err
+}
+
+func (p *PostgresStore) UpdateIngestionStatus(eventID, status string) error {
+	if p == nil || p.db == nil {
+		return nil
+	}
+	_, err := p.db.Exec(`
+UPDATE ingestion_statuses
+SET event_status = $2, update_time = CURRENT_TIMESTAMP
+WHERE event_id = $1`, eventID, status)
+	return err
+}
+
+func (p *PostgresStore) GetIngestionStatus(eventID string) (models.IngestionStatus, bool, error) {
+	if p == nil || p.db == nil {
+		return models.IngestionStatus{}, false, nil
+	}
+	var status models.IngestionStatus
+	err := p.db.QueryRow(`
+SELECT event_id, event_status, create_time, update_time
+FROM ingestion_statuses
+WHERE event_id = $1`, eventID).Scan(
+		&status.EventID,
+		&status.Status,
+		&status.CreatedAt,
+		&status.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return models.IngestionStatus{}, false, nil
+	}
+	if err != nil {
+		return models.IngestionStatus{}, false, err
+	}
+	return status, true, nil
 }

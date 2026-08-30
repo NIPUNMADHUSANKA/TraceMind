@@ -43,11 +43,11 @@ type IngestRequest struct {
 
 // IngestResponse
 type IngestResponse struct {
-	IngestionID   string   `json:"ingestionId"`
-	AcceptedCount int      `json:"acceptedCount"`
-	DuplicateCount int     `json:"duplicateCount,omitempty"`
-	RejectedCount int      `json:"rejectedCount"`
-	Errors        []string `json:"errors,omitempty"`
+	IngestionID    string   `json:"ingestionId"`
+	AcceptedCount  int      `json:"acceptedCount"`
+	DuplicateCount int      `json:"duplicateCount,omitempty"`
+	RejectedCount  int      `json:"rejectedCount"`
+	Errors         []string `json:"errors,omitempty"`
 }
 
 // Incident represents a correlated incident
@@ -137,4 +137,11 @@ The pointer lets you distinguish between:
 type AiSuggestion struct {
 	HypothesisTemplate string   `json:"hypothesisTemplate"`
 	Recommendations    []string `json:"recommendations,omitempty"`
+}
+
+type IngestionStatus struct {
+	EventID   string
+	Status    string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }

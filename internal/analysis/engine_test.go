@@ -3,9 +3,17 @@ package analysis
 import (
 	"testing"
 	"tracemind/internal/models"
+	"tracemind/internal/store"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestAnalyzerReturnsResultAndError(t *testing.T) {
+	var analyze func(models.Incident, []models.Signal, store.PostgresStore) (models.AnalysisResult, error) = NewRuleEngine().Analyze
+	if analyze == nil {
+		t.Fatal("expected analyzer function")
+	}
+}
 
 func TestEvaluateRuleAgainstEvidence_SingleAndCorrelation(t *testing.T) {
 	t.Parallel()

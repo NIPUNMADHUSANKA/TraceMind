@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bufio"
+	"context"
 	"fmt"
 	"time"
 	"tracemind/internal/models"
@@ -38,7 +40,7 @@ type ingestSignalInput struct {
 }
 
 type ingestQueue interface {
-	Enqueue(job queue.IngestionJob) error
+	Enqueue(ctx context.Context, job queue.IngestionJob) error
 }
 
 func IngestHandler(s store.PostgresStore, q ingestQueue) fiber.Handler {
@@ -134,8 +136,14 @@ func IngestHandler(s store.PostgresStore, q ingestQueue) fiber.Handler {
 		ingID := ""
 		if len(acceptedSignals) > 0 {
 			ingID = uuid.NewString()
+			if err := s.CreateIngestionStatus(ingID, "pending"); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+			}
 			job := queue.IngestionJob{IngestionID: ingID, Signals: acceptedSignals}
-			if err := q.Enqueue(job); err != nil {
+			if err := q.Enqueue(c.UserContext(), job); err != nil {
+				if statusErr := s.UpdateIngestionStatus(ingID, "failed"); statusErr != nil {
+					return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": statusErr.Error()})
+				}
 				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 			}
 		}
@@ -147,5 +155,74 @@ func IngestHandler(s store.PostgresStore, q ingestQueue) fiber.Handler {
 			Errors:         errs,
 		}
 		return c.Status(fiber.StatusOK).JSON(resp)
+	}
+}
+
+func HandleSSE(s store.PostgresStore, broker *util.Broker) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		ingestionID := c.Params("id")
+		if ingestionID == "" {
+			return c.Status(fiber.StatusBadRequest).SendString("missing ingestion ID")
+		}
+
+		c.Set(fiber.HeaderContentType, "text/event-stream")
+		c.Set(fiber.HeaderCacheControl, "no-cache")
+		c.Set(fiber.HeaderConnection, "keep-alive")
+		c.Set("Access-Control-Allow-Origin", "*")
+
+		ch := broker.Subscribe(ingestionID)
+
+		status, found, err := s.GetIngestionStatus(ingestionID)
+
+		if err != nil {
+			broker.Unsubscribe(ingestionID, ch)
+			return c.Status(fiber.StatusInternalServerError).
+				SendString("failed to get ingestion status")
+		}
+
+		if !found {
+			broker.Unsubscribe(ingestionID, ch)
+			return c.Status(fiber.StatusNotFound).
+				SendString("ingestion not found")
+		}
+
+		c.Context().SetBodyStreamWriter(func(writer *bufio.Writer) {
+			defer broker.Unsubscribe(ingestionID, ch)
+
+			if _, err := fmt.Fprintf(writer, "id: %s\nstatus: %s\n\n", ingestionID, status.Status); err != nil {
+				return
+			}
+			if err := writer.Flush(); err != nil {
+				return
+			}
+			if status.Status == "completed" || status.Status == "failed" {
+				return
+			}
+
+			for {
+				event, ok := <-ch
+
+				if !ok {
+					return
+				}
+
+				if _, err := fmt.Fprint(
+					writer,
+					event.Format(),
+				); err != nil {
+					return
+				}
+
+				if err := writer.Flush(); err != nil {
+					return
+				}
+
+				if event.Status == "completed" || event.Status == "failed" {
+					return
+				}
+			}
+		})
+
+		return nil
 	}
 }
