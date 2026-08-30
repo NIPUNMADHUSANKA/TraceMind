@@ -14,6 +14,7 @@ import (
 	"tracemind/internal/models"
 	"tracemind/internal/queue"
 	"tracemind/internal/store"
+	"tracemind/internal/util"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
@@ -33,7 +34,8 @@ var processDelivery = func(job queue.IngestionJob, st store.PostgresStore) error
 
 var incidentAnalyzer = analysis.NewRuleEngine()
 
-func StartWorker(q deliveryQueue, st store.PostgresStore, stopch <-chan struct{}) {
+func StartWorker(q deliveryQueue, st store.PostgresStore, stopch <-chan struct{}, broker *util.Broker) {
+
 	go func() {
 		for {
 			select {
@@ -71,18 +73,41 @@ func StartWorker(q deliveryQueue, st store.PostgresStore, stopch <-chan struct{}
 				continue
 			}
 
+			if err := st.UpdateIngestionStatus(delivery.IngestionID, "processing"); err != nil {
+				log.Printf("worker: set ingestion %s processing failed: %v", delivery.IngestionID, err)
+				continue
+			}
+			publishStatus(broker, delivery.IngestionID, "processing")
+
 			if err := processDelivery(delivery, st); err != nil {
+				if statusErr := st.UpdateIngestionStatus(delivery.IngestionID, "failed"); statusErr != nil {
+					log.Printf("worker: set ingestion %s failed: %v", delivery.IngestionID, statusErr)
+				}
+				publishStatus(broker, delivery.IngestionID, "failed")
+
 				if nackErr := q.Nack(receiptHandle, context.Background()); nackErr != nil {
 					log.Printf("worker: nack failed for receipt %s: %v", messageID, nackErr)
 				}
 				continue
 			}
 
+			if err := st.UpdateIngestionStatus(delivery.IngestionID, "completed"); err != nil {
+				log.Printf("worker: set ingestion %s completed failed: %v", delivery.IngestionID, err)
+			}
+			publishStatus(broker, delivery.IngestionID, "completed")
+
 			if err := q.Ack(receiptHandle, context.Background()); err != nil {
 				log.Printf("worker: ack failed for receipt %s: %v", messageID, err)
 			}
 		}
 	}()
+}
+
+func publishStatus(broker *util.Broker, eventID, status string) {
+	if broker == nil {
+		return
+	}
+	broker.Publish(eventID, util.Event{ID: eventID, Status: status})
 }
 
 func processJob(job queue.IngestionJob, st store.PostgresStore) error {

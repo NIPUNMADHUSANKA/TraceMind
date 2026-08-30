@@ -37,10 +37,11 @@ func main() {
 		log.Fatalf("failed to create SQS client: %v", err)
 	}
 	processingQueue := queue.NewSQSQueue(sqs_client, os.Getenv("SQS_PROCESSING_QUEUE_URL"))
+	broker := util.NewBroker()
 
 	stopCh := make(chan struct{})
 	stopDel := make(chan struct{})
-	worker.StartWorker(processingQueue, dbConn, stopCh)
+	worker.StartWorker(processingQueue, dbConn, stopCh, broker)
 
 	env := os.Getenv("APP_ENV")
 	if env == "" {
@@ -60,6 +61,7 @@ func main() {
 
 	apiGroup := app.Group("/api")
 	apiGroup.Post("/ingest", api.IngestHandler(dbConn, processingQueue))
+	apiGroup.Get("/ingest/:id/events", api.HandleSSE(dbConn, broker))
 	apiGroup.Get("/incidents", api.IncidentsHandler(dbConn))
 	apiGroup.Get("/incidents/:id", api.IncidentGetHandler(dbConn))
 	apiGroup.Get("/health/ingestion", api.HealthHandler(processingQueue))
