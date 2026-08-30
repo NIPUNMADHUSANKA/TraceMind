@@ -79,7 +79,7 @@ func TestQueueAnalysisArchiveE2E(t *testing.T) {
 
 	q := newQueueArchiveE2EQueueAdapter(queue.QueueConfig{MaxAttempts: 2, VisibilityTimeout: 20 * time.Millisecond})
 	stopCh := make(chan struct{})
-	worker.StartWorker(q, st, stopCh)
+	worker.StartWorker(q, st, stopCh, nil)
 	t.Cleanup(func() {
 		close(stopCh)
 	})

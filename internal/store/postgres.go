@@ -95,6 +95,19 @@ CREATE TABLE IF NOT EXISTS payload_filter_configs (
 	}
 
 	_, err = db.Exec(`
+CREATE TABLE IF NOT EXISTS ingestion_statuses (
+    event_id text PRIMARY KEY,
+	event_status text NOT NULL,
+	create_time timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	update_time timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	_, err = db.Exec(`
 CREATE TABLE IF NOT EXISTS analysis_rules (
 	id text PRIMARY KEY,
 	name varchar(200) NOT NULL,
@@ -1131,4 +1144,49 @@ func (p *PostgresStore) GetIncident(id string) (models.Incident, bool) {
 		}
 	}
 	return inc, true
+}
+
+func (p *PostgresStore) CreateIngestionStatus(eventID, status string) error {
+	if p == nil || p.db == nil {
+		return nil
+	}
+	_, err := p.db.Exec(`
+INSERT INTO ingestion_statuses (event_id, event_status, create_time, update_time)
+VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON CONFLICT (event_id) DO NOTHING`, eventID, status)
+	return err
+}
+
+func (p *PostgresStore) UpdateIngestionStatus(eventID, status string) error {
+	if p == nil || p.db == nil {
+		return nil
+	}
+	_, err := p.db.Exec(`
+UPDATE ingestion_statuses
+SET event_status = $2, update_time = CURRENT_TIMESTAMP
+WHERE event_id = $1`, eventID, status)
+	return err
+}
+
+func (p *PostgresStore) GetIngestionStatus(eventID string) (models.IngestionStatus, bool, error) {
+	if p == nil || p.db == nil {
+		return models.IngestionStatus{}, false, nil
+	}
+	var status models.IngestionStatus
+	err := p.db.QueryRow(`
+SELECT event_id, event_status, create_time, update_time
+FROM ingestion_statuses
+WHERE event_id = $1`, eventID).Scan(
+		&status.EventID,
+		&status.Status,
+		&status.CreatedAt,
+		&status.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return models.IngestionStatus{}, false, nil
+	}
+	if err != nil {
+		return models.IngestionStatus{}, false, err
+	}
+	return status, true, nil
 }

@@ -79,7 +79,7 @@ func TestIngestCreatesIncidentAndListsViaAPI(t *testing.T) {
 
 	q := newE2EQueueAdapter(queue.QueueConfig{MaxAttempts: 3})
 	stopCh := make(chan struct{})
-	worker.StartWorker(q, st, stopCh)
+	worker.StartWorker(q, st, stopCh, nil)
 	t.Cleanup(func() {
 		close(stopCh)
 	})

@@ -78,7 +78,7 @@ func TestStartWorker_NilReceiptHandleAndMessageIdDoesNotPanic(t *testing.T) {
 	stopch := make(chan struct{})
 
 	// Start worker in background
-	StartWorker(mq, store.PostgresStore{}, stopch)
+	StartWorker(mq, store.PostgresStore{}, stopch, nil)
 
 	// Wait briefly for execution
 	time.Sleep(50 * time.Millisecond)
@@ -104,7 +104,7 @@ func TestStartWorker_NackWithNilReceiptHandleDoesNotPanic(t *testing.T) {
 	}
 	stopch := make(chan struct{})
 
-	StartWorker(mq, store.PostgresStore{}, stopch)
+	StartWorker(mq, store.PostgresStore{}, stopch, nil)
 
 	time.Sleep(50 * time.Millisecond)
 	close(stopch)

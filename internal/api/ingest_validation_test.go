@@ -36,6 +36,16 @@ func (q *ingestTestQueue) Dequeue(ctx context.Context) (queue.Delivery, error) {
 	return q.ReliableQueue.Dequeue(ctx)
 }
 
+type failingIngestQueue struct {
+	err         error
+	ingestionID string
+}
+
+func (q *failingIngestQueue) Enqueue(_ context.Context, job queue.IngestionJob) error {
+	q.ingestionID = job.IngestionID
+	return q.err
+}
+
 func setupIngestApp(t *testing.T) (*fiber.App, *ingestTestQueue) {
 	t.Helper()
 
@@ -207,6 +217,29 @@ func TestIngestValidation_QueuesOnlyAcceptedSignals(t *testing.T) {
 	assert.Len(t, delivery.Job.Signals, 1)
 	assert.Equal(t, "svc-a", delivery.Job.Signals[0].Source)
 	assert.Equal(t, "log", delivery.Job.Signals[0].EventType)
+}
+
+func TestIngestValidation_MarksIngestionFailedWhenEnqueueFails(t *testing.T) {
+	s, cleanup := newTestPostgresStore(t)
+	t.Cleanup(cleanup)
+
+	app := fiber.New()
+	q := &failingIngestQueue{err: errors.New("queue unavailable")}
+	app.Post("/api/ingest", api.IngestHandler(s, q))
+
+	resp, err := app.Test(httptest.NewRequest(
+		http.MethodPost,
+		"/api/ingest",
+		strings.NewReader(`{"sourceContext":"local","signals":[{"eventType":"log","source":"svc-a","severity":5}]}`),
+	))
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.NoError(t, resp.Body.Close())
+
+	status, found, err := s.GetIngestionStatus(q.ingestionID)
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "failed", status.Status)
 }
 
 func TestIngestValidation_ProducesIncidentImmediatelyInProduction(t *testing.T) {
