@@ -38,7 +38,7 @@ test/e2e/                   # End-to-end test coverage
 
 ## Architecture
 
-![TraceMind architecture diagram](TraceMind.drawio.png)
+![TraceMind architecture diagram](TraceMind.drawio.svg)
 
 ## Prerequisites
 
