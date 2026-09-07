@@ -8,10 +8,11 @@ It accepts batches of operational signals, persists them in Postgres, queues ing
 
 - Ingests structured signals via `POST /api/ingest`
 - Persists signals and incidents in Postgres
-- Processes ingestion jobs using an in-memory reliable queue with retry and dead-letter counters
+- Processes ingestion jobs through AWS SQS with acknowledgement and visibility-delay retry handling
 - Correlates incidents by source + environment within a time window
 - Generates analysis output using deterministic rules, with AI fallback when no rules match
 - Exposes health and queue lifecycle metrics
+- Streams ingestion status updates through Server-Sent Events (SSE)
 - Supports payload allow-list configuration per environment
 - Supports CRUD APIs for analysis rules and analysis rule patterns
 
@@ -20,7 +21,7 @@ It accepts batches of operational signals, persists them in Postgres, queues ing
 - Language: Go 1.25
 - HTTP server: Fiber v2
 - Database: PostgreSQL
-- Queue: in-memory reliable queue implementation (`internal/queue`)
+- Queue: Amazon SQS (`internal/queue`)
 - Optional AI provider: OpenAI (via `OPENAI_API_KEY`)
 
 ## Project layout
@@ -31,18 +32,20 @@ internal/api/               # HTTP handlers
 internal/worker/            # Background ingestion worker and incident correlation
 internal/analysis/          # Rule engine and AI fallback orchestration
 internal/store/             # Postgres persistence, retention, payload filtering
-internal/queue/             # Reliable queue (ack/nack, retries, visibility timeout)
+internal/queue/             # AWS SQS queue adapter and in-memory test queue
 test/e2e/                   # End-to-end test coverage
 ```
 
 ## Architecture
 
-![TraceMind architecture diagram](tracemind_full_architecture_v5.svg)
+![TraceMind architecture diagram](TraceMind.drawio.png)
 
 ## Prerequisites
 
 - Go 1.25+
 - PostgreSQL reachable with a valid DSN
+- AWS credentials available through the AWS SDK v2 default credential chain
+- An Amazon SQS processing queue
 
 ## Quick start (5 minutes)
 
@@ -61,6 +64,8 @@ docker run --name tracemind-pg --rm -p 5432:5432 \
 ```powershell
 $env:DATABASE_URL = "postgres://postgres:postgres@localhost:5432/tracemind?sslmode=disable"
 $env:APP_ENV = "staging"
+$env:AWS_REGION = "ap-southeast-1"
+$env:SQS_PROCESSING_QUEUE_URL = "https://sqs.ap-southeast-1.amazonaws.com/123456789012/tracemind-processing"
 go run ./cmd/server
 ```
 
@@ -85,6 +90,10 @@ Expected response:
 - `APP_ENV` (optional)
   - Default: `staging`
   - Used for retention profile and payload allow-list selection
+- `AWS_REGION` (required)
+  - AWS region used to create the SQS client
+- `SQS_PROCESSING_QUEUE_URL` (required)
+  - Full URL of the SQS queue used for ingestion jobs
 - `OPENAI_API_KEY` (optional)
   - Used only when deterministic rules do not produce hypotheses
 
@@ -100,6 +109,7 @@ On startup, TraceMind auto-creates required tables/indexes if they do not alread
 - `signals`
 - `incidents`
 - `payload_filter_configs`
+- `ingestion_statuses`
 - `analysis_rules`
 - `analysis_rules_patterns`
 
@@ -112,6 +122,8 @@ PowerShell:
 ```powershell
 $env:DATABASE_URL = "postgres://postgres:postgres@localhost:5432/tracemind?sslmode=disable"
 $env:APP_ENV = "staging"
+$env:AWS_REGION = "ap-southeast-1"
+$env:SQS_PROCESSING_QUEUE_URL = "https://sqs.ap-southeast-1.amazonaws.com/123456789012/tracemind-processing"
 go run ./cmd/server
 ```
 
@@ -131,8 +143,15 @@ Run container:
 docker run --rm -p 8080:8080 \
   -e DATABASE_URL="postgres://postgres:postgres@host.docker.internal:5432/tracemind?sslmode=disable" \
   -e APP_ENV="staging" \
+  -e AWS_REGION="ap-southeast-1" \
+  -e SQS_PROCESSING_QUEUE_URL="https://sqs.ap-southeast-1.amazonaws.com/123456789012/tracemind-processing" \
+  -e AWS_ACCESS_KEY_ID \
+  -e AWS_SECRET_ACCESS_KEY \
+  -e AWS_SESSION_TOKEN \
   tracemind:local
 ```
+
+The AWS credential variables are passed through only when they are needed by your credential setup. The AWS SDK v2 also supports its other default credential sources.
 
 ## API overview
 
@@ -140,6 +159,7 @@ docker run --rm -p 8080:8080 \
 
 - `GET /`
 - `POST /api/ingest`
+- `GET /api/ingest/:id/events`
 - `GET /api/incidents`
 - `GET /api/incidents/:id`
 - `GET /api/health/ingestion`
@@ -217,6 +237,42 @@ Notes:
 - Only accepted signals are enqueued for worker processing
 - `sourceContext` is accepted in request payload for context tagging but is not currently used by downstream processing.
 
+### Ingestion status stream
+
+`GET /api/ingest/:id/events`
+
+Streams the lifecycle of an accepted ingestion batch using SSE. The handler subscribes to the in-memory broker first, then reads the persisted status from PostgreSQL. This ordering prevents a live status change from being missed between the status read and subscription, while allowing late subscribers to recover the current state from PostgreSQL.
+
+Each update uses this format:
+
+```text
+id: <ingestion-id>
+status: pending
+
+```
+
+Status values:
+
+- `pending`: the ingestion status was stored before the batch was enqueued.
+- `processing`: the worker started processing the queued batch.
+- `completed`: the worker processed the batch successfully.
+- `failed`: queueing or worker processing failed.
+
+The stream closes after `completed` or `failed`.
+
+Example:
+
+```bash
+curl -N http://localhost:8080/api/ingest/<ingestion-id>/events
+```
+
+Response behavior:
+
+- `200 OK` when the ingestion ID exists and the stream is opened.
+- `400 Bad Request` when the ingestion ID is missing.
+- `404 Not Found` when no ingestion status exists for the ID.
+- `500 Internal Server Error` when TraceMind cannot read the status or create the stream.
+
 ### Incident query endpoints
 
 - `GET /api/incidents` returns:
@@ -239,15 +295,14 @@ Returns queue and incident visibility metrics:
 
 ```json
 {
-  "ingestion": {
-    "queueDepth": 0,
-    "retryCount": 0,
-    "deadLetterCount": 0,
-    "lastProcessedTimestamp": "2026-07-25T14:30:00Z"
-  },
-  "incidents": 2
+  "status": "healthy",
+  "available": "5",
+  "inFlight": "2",
+  "delayed": "0"
 }
 ```
+
+These values are SQS approximate queue counts: available messages, messages not visible while in flight, and delayed messages.
 
 ### Payload allow-list configuration
 
@@ -411,25 +466,20 @@ Validation notes:
 
 1. API validates each incoming signal.
 2. Valid signals are persisted to `signals` table.
-3. Batch of accepted signals is enqueued as one ingestion job.
-4. Worker dequeues and groups signals by `source + environment` over a correlation window.
+3. A `pending` ingestion status is persisted and the accepted signals are enqueued as one AWS SQS ingestion job.
+4. The worker dequeues the ingestion job, marks the batch `processing`, then groups signals by `source + environment` over a correlation window.
 5. High-severity groups can create or update incidents.
 6. Analysis engine tries deterministic rules first; if no hypothesis is produced, AI fallback is used.
-7. Incident summary and recommendations are stored in `incidents`.
+7. Incident summary and recommendations are stored in `incidents`; the worker publishes `completed` or `failed` for SSE clients.
 
 ## Queue behavior
 
-Default queue configuration:
+TraceMind uses AWS SQS for durable processing of ingestion jobs. The worker long-polls for one message at a time for up to `20` seconds.
 
-- Max attempts: `3`
-- Visibility timeout: `30s`
-
-Lifecycle semantics:
-
-- `Ack` marks success
-- `Nack` increments retry count and requeues until max attempts
-- Exceeded attempts increment dead-letter count
-- Expired in-flight deliveries are retried automatically
+- `Ack` deletes a successfully processed message from SQS.
+- `Nack` applies a `30` second visibility delay, after which SQS can deliver the message again.
+- SQS provides at-least-once delivery. Worker processing must tolerate duplicate deliveries; message ordering is not guaranteed for a standard SQS queue.
+- Configure any maximum receive count and dead-letter queue policy on the SQS queue itself.
 
 ## Retention and archive tiers
 
