@@ -58,6 +58,8 @@ func main() {
 			"message": "TraceMind Fiber app is running",
 		})
 	})
+	app.Get("/docs", api.SwaggerUIHandler())
+	app.Get("/api/openapi.json", api.OpenAPISpecHandler())
 
 	apiGroup := app.Group("/api")
 	apiGroup.Post("/ingest", api.IngestHandler(dbConn, processingQueue))

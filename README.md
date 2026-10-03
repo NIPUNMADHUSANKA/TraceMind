@@ -155,6 +155,38 @@ The AWS credential variables are passed through only when they are needed by you
 
 ## API overview
 
+### Typical workflow
+
+Payload filters and analysis rules are optional configuration. The core path is to ingest signals, track their processing, then inspect any incidents created from them.
+
+1. **Optional payload filtering:** Call `POST /api/payload-filters/{environment}` to configure which payload keys are retained for an environment.
+2. **Optional rule-based analysis:** Call `POST /api/analysis-rules`, then create patterns with `POST /api/analysis-rule-patterns` using the returned rule ID as `ruleId`. Without custom rules, TraceMind can still analyze ingested signals using its configured analysis behavior.
+3. **Ingest signals:** Send a batch to `POST /api/ingest`:
+
+  ```bash
+  curl -X POST http://localhost:8080/api/ingest \
+    -H "Content-Type: application/json" \
+    -d '{"signals":[{"eventType":"log","source":"payment-api","environment":"prod","severity":3,"message":"Payment retry triggered"}]}'
+  ```
+
+  For a newly accepted signal, the `200 OK` response includes an `ingestionId`, for example:
+
+  ```json
+  {"ingestionId":"ingestion-123","acceptedCount":1,"duplicateCount":0,"rejectedCount":0,"errors":[]}
+  ```
+
+  Keep that ID for the next call. If `ingestionId` is empty, no new signal was accepted into a batch, so there is no status stream to follow.
+4. **Track processing:** Connect to `GET /api/ingest/ingestion-123/events` (replace the example ID). This is an SSE stream; `curl -N` keeps the connection open:
+
+  ```bash
+  curl -N http://localhost:8080/api/ingest/ingestion-123/events
+  ```
+
+  Wait for a terminal `completed` or `failed` status before checking for resulting incidents.
+5. **Review incidents:** Call `GET /api/incidents`, then use an incident's ID with `GET /api/incidents/{id}`.
+
+`GET /api/health/ingestion` is a separate diagnostic endpoint for queue health, not a required step in processing signals. The sections below provide request validation, response behavior, and configuration details for each endpoint.
+
 ### Base routes
 
 - `GET /`
@@ -224,8 +256,9 @@ Successful response shape:
 
 ```json
 {
-  "ingestionId": "generated-id-or-empty",
+  "ingestionId": "ingestion-123",
   "acceptedCount": 1,
+  "duplicateCount": 0,
   "rejectedCount": 0,
   "errors": []
 }
@@ -255,8 +288,9 @@ Status values:
 
 - `pending`: the ingestion status was stored before the batch was enqueued.
 - `processing`: the worker started processing the queued batch.
+- `retrying`: processing failed transiently and the job will be retried.
 - `completed`: the worker processed the batch successfully.
-- `failed`: queueing or worker processing failed.
+- `failed`: processing reached a terminal failure state.
 
 The stream closes after `completed` or `failed`.
 
